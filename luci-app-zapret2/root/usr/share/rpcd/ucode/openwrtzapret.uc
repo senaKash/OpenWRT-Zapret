@@ -3,9 +3,9 @@ import { popen, glob, readfile } from 'fs';
 const SERVICE = '/usr/libexec/openwrtzapret/service';
 
 function invoke(action, id) {
-	// Array form uses execvp(), so no shell parses either argument.
-	let args = id == null ? [SERVICE, action] : [SERVICE, action, id];
-	let fd = popen(args, 'r');
+	// Строковый вызов используется для совместимости со старыми версиями ucode; action и id проверяются перед запуском.
+	let cmd = SERVICE + ' ' + action + (id == null ? '' : ' ' + id);
+	let fd = popen(cmd, 'r');
 	if (!fd)
 		return { ok: false, error: 'backend_unavailable' };
 	let output = fd.read('all');

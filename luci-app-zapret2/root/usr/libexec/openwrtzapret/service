@@ -24,7 +24,7 @@ owz_table_name() {
 	local name
 	[ -r /opt/zapret2/config ] || return 1
 	name=$(sed -n 's/^ZAPRET_NFT_TABLE=//p' /opt/zapret2/config 2>/dev/null | tail -n 1)
-	[ -n "$name" ] || name=zapret
+	[ -n "$name" ] || name=zapret2
 	case "$name" in
 		\'*\') name=${name#\'}; name=${name%\'};;
 		\"*\") name=${name#\"}; name=${name%\"};;
@@ -67,7 +67,7 @@ owz_probe_firewall() {
 		/^[[:space:]]*chain[[:space:]]+[A-Za-z0-9_]+[[:space:]]*\{/ {
 			chain=$2; sub(/\{.*/, "", chain); chains[chain]=1; chain_count++; next
 		}
-		chain != "" && /}/ { chain=""; next }
+		chain != "" && /^[[:space:]]*}[[:space:]]*$/ { chain=""; next }
 		chain != "" {
 			if ($0 ~ /type[[:space:]]+[^;]+hook[[:space:]]+(forward|output|prerouting|input|postrouting)[[:space:]]/) hook[chain]=1
 			if ($0 ~ /(^|[[:space:]])queue[[:space:]]+(num|flags)/) queue[chain]=1
