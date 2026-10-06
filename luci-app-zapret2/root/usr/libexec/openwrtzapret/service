@@ -312,7 +312,7 @@ owz_profile_active() {
 }
 
 owz_profile_overlay() {
-	local id="$1" tmp=/opt/zapret2/config.owz.$$
+	local id="$1" tmp=/opt/zapret2/config.owz.$$ file
 	owz_profile_load "$id" || return 1
 	[ "$OWZ_PROFILE_COMPATIBLE" = true ] || return 1
 	owz_profile_requirements_ready || return 1
@@ -329,7 +329,16 @@ owz_profile_overlay() {
 			if (!seen_nfq) print "NFQWS2_OPT=\"" nfq "\""
 		}
 	' /opt/zapret2/config > "$tmp" || { rm -f "$tmp"; return 1; }
-	chmod 600 "$tmp" && mv -f "$tmp" /opt/zapret2/config || { rm -f "$tmp"; return 1; }
+	chmod 600 "$tmp" && mv -f "$tmp" /opt/zapret2/config || {
+		rm -f "$tmp"
+		return 1
+	}
+
+	# nfqws2 не принимает стандартные hostlist-файлы, если их mtime равен Unix epoch.
+	# Обновляем время изменения существующих файлов перед запуском профиля с <HOSTLIST>.
+	for file in /opt/zapret2/ipset/zapret-hosts-user.txt /opt/zapret2/ipset/zapret-hosts-user-exclude.txt; do
+		[ ! -f "$file" ] || touch "$file" 2>/dev/null || :
+	done
 }
 
 owz_profile_overlay_active() {
@@ -357,15 +366,21 @@ owz_profile_result() {
 owz_restore_snapshot() {
 	local backup="$1" old_profile="$2" old_state="$3" failed=false
 	owz_status >/dev/null
+
 	if [ "$OWZ_DAEMON" = true ] || [ "$OWZ_FIREWALL" = true ] || [ "$OWZ_QUEUE_RULE" = true ]; then
-		owz_init stop_fw || failed=true
-		owz_init stop_daemons || failed=true
+		owz_init stop_fw || :
+		owz_init stop_daemons || :
+		owz_wait_for STOPPED || failed=true
 	fi
+
 	cp -p "$backup/config" /opt/zapret2/config || failed=true
 	owz_profile_restore_pointer "$old_profile" || failed=true
+
 	if [ "$old_state" = RUNNING ]; then
-		owz_init start_daemons || failed=true
-		owz_init start_fw || failed=true
+		# Return code отдельных init-команд может быть ненулевым даже при успешном переходе.
+		# Поэтому итог восстановления определяем по фактическому состоянию сервиса.
+		owz_init start_daemons || :
+		owz_init start_fw || :
 		owz_wait_for RUNNING || failed=true
 	else
 		owz_wait_for STOPPED || failed=true
@@ -540,15 +555,17 @@ owz_job_snapshot_restore() {
 	case "$old_state" in RUNNING|STOPPED) :;; *) return 1;; esac
 	owz_status >/dev/null
 	if [ "$OWZ_DAEMON" = true ] || [ "$OWZ_FIREWALL" = true ] || [ "$OWZ_QUEUE_RULE" = true ]; then
-		owz_init stop_fw || failed=true
-		owz_init stop_daemons || failed=true
+		# Не считаем промежуточный return code ошибкой сам по себе:
+		# решающим является достижение состояния STOPPED.
+		owz_init stop_fw || :
+		owz_init stop_daemons || :
 		owz_wait_for STOPPED || failed=true
 	fi
 	cp -p "$dir/snapshot/config" /opt/zapret2/config || failed=true
 	owz_profile_restore_pointer "$old_profile" || failed=true
 	if [ "$old_state" = RUNNING ]; then
-		owz_init start_daemons || failed=true
-		owz_init start_fw || failed=true
+		owz_init start_daemons || :
+		owz_init start_fw || :
 		owz_wait_for RUNNING || failed=true
 	else
 		owz_wait_for STOPPED || failed=true
@@ -577,18 +594,25 @@ owz_probe_http() {
 }
 
 owz_probe_voice_udp() {
-	local out code sec ms rc
+	local out code sec ms rc features
 	if ! command -v curl >/dev/null 2>&1; then
 		printf '%s' '{"status":"PARTIAL","transport":"UNKNOWN","latency_ms":null,"detail":"curl_missing","scope":"transport_only"}'
 		return 0
 	fi
-	if ! curl --help all 2>/dev/null | grep -q -- '--http3-only'; then
-		printf '%s' '{"status":"PARTIAL","transport":"UNKNOWN","latency_ms":null,"detail":"http3_probe_unavailable","scope":"transport_only"}'
-		return 0
-	fi
-	# This verifies that UDP/QUIC traffic to Discord can pass. It is intentionally
-	# not presented as a successful authenticated Discord voice call or as a probe
-	# of Discord's dynamically allocated voice media port.
+
+	# Наличие --http3-only в справке curl ещё не означает, что libcurl собран с HTTP/3.
+	# Проверяем реальный список возможностей из `curl --version`.
+	features=$(curl --version 2>/dev/null | sed -n 's/^Features:[[:space:]]*//p')
+	case " $features " in
+		*" HTTP3 "*) ;;
+		*)
+			printf '%s' '{"status":"PARTIAL","transport":"UNKNOWN","latency_ms":null,"detail":"http3_probe_unavailable","scope":"transport_only"}'
+			return 0
+			;;
+	esac
+
+	# Проверка подтверждает только прохождение UDP/QUIC-трафика к Discord.
+	# Она не является проверкой реального голосового звонка или динамического voice-порта Discord.
 	out=$(curl --http3-only -sS -o /dev/null -w '%{http_code} %{time_total}' --connect-timeout 4 --max-time 8 'https://discord.com/api/v10/gateway' 2>/dev/null); rc=$?
 	if [ "$rc" -ne 0 ]; then
 		printf '%s' '{"status":"FAIL","transport":"FAIL","latency_ms":null,"detail":"discord_udp_quic_failed","scope":"transport_only"}'
