@@ -1,4 +1,4 @@
-# OpenWRTZapret
+# OpenWRT-Zapret
 
 OpenWRTZapret — интерфейс управления и менеджер стратегий для Zapret2/nfqws2 на OpenWrt.
 
