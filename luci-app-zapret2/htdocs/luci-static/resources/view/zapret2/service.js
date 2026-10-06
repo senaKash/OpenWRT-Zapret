@@ -6,7 +6,6 @@
 'require view';
 'require view.zapret2.tools as tools';
 'require view.zapret2.diagnost as diagnost';
-'require view.zapret2.updater as updater';
 
 const btn_style_neutral  = 'btn';
 const btn_style_action   = 'btn cbi-button-action';
@@ -27,7 +26,6 @@ return view.extend({
             "stop"    : elems.btn_stop    || document.getElementById('btn_stop'),
             "reset"   : elems.btn_reset   || document.getElementById('btn_reset'),
             "diag"    : elems.btn_diag    || document.getElementById('btn_diag'),
-            "update"  : elems.btn_update  || document.getElementById('btn_update'),
         };
     },
     
@@ -37,20 +35,21 @@ return view.extend({
             error_code = button;
         }
         let btn = this.get_svc_buttons(elems);
-        btn.enable.disabled  = flag;
-        btn.disable.disabled = flag;
-        btn.start.disabled   = flag;
-        btn.restart.disabled = flag;
-        btn.stop.disabled    = flag;
+        if (btn.enable) btn.enable.disabled = flag;
+        if (btn.disable) btn.disable.disabled = flag;
+        if (btn.start) btn.start.disabled = flag;
+        if (btn.restart) btn.restart.disabled = flag;
+        if (btn.stop) btn.stop.disabled = flag;
         btn.reset.disabled   = (error_code == 0) ? flag : false;
-        btn.update.disabled  = (error_code == 0) ? flag : false;
     },
 
     getAppStatus: function()
     {
+        let statusPromise = tools.callStatus();
         return tools.promiseAllDict({
             svc_boot   : tools.getInitState(tools.appName),
-            svc_en     : fs.exec(tools.execPath, [ 'enabled' ]),
+            svc_en     : statusPromise.then(s => ({ code: s.enabled === true ? 0 : 1 })),
+            svc_status : statusPromise,
             svc_info   : tools.getSvcInfo(),
             proc_list  : fs.exec('/bin/busybox', [ 'ps' ]),
             pkg_dict   : tools.getPackageDict(),
@@ -105,27 +104,28 @@ return view.extend({
         }
         let btn = this.get_svc_buttons(elems);
         btn.reset.disabled = false;
-        btn.update.disabled = false;
 
         if (Number.isInteger(svcinfo)) {
             ui.addNotification(null, E('p', _('Error')
                 + ' %s: return code = %s'.format('decode_svc_info', svcinfo + ' ')));
             this.disableButtons(true, -1, elems);
         } else {
-            btn.enable.disabled  = (svc_en) ? true : false;
-            btn.disable.disabled = (svc_en) ? false : true;
+            if (btn.enable) btn.enable.disabled = svc_en;
+            if (btn.disable) btn.disable.disabled = !svc_en;
             if (!svcinfo.dmn.inited) {
-                btn.start.disabled = false;
-                btn.restart.disabled = true;
-                btn.stop.disabled = true;
+                if (btn.start) btn.start.disabled = false;
+                if (btn.restart) btn.restart.disabled = true;
+                if (btn.stop) btn.stop.disabled = true;
             } else {
-                btn.start.disabled = true;
-                btn.restart.disabled = false;
-                btn.stop.disabled = false;
+                if (btn.start) btn.start.disabled = true;
+                if (btn.restart) btn.restart.disabled = false;
+                if (btn.stop) btn.stop.disabled = false;
             }
         }
         let elem_status = elems.status || document.getElementById("status");
         elem_status.innerHTML = tools.makeStatusString(svcinfo, this.pkg_arch, '');
+        elem_status.prepend(E('div', { 'class': 'cbi-value-description' },
+            _('Verified runtime status: %s').format(data.svc_status?.state || 'ERROR')));
         this.POLL.running = false;
     },
 
@@ -356,20 +356,6 @@ return view.extend({
             }, locname);
         };
         
-        let btn_enable      = create_btn('btn_enable',  btn_style_success, _('Enable'));
-        btn_enable.onclick  = this.createServiceHandlerFn('enable', 'btn_enable');
-        let btn_disable     = create_btn('btn_disable', btn_style_warning, _('Disable'));
-        btn_disable.onclick = this.createServiceHandlerFn('disable', 'btn_disable');
-        layout_append(_('Service autorun control'), null, [ btn_enable, btn_disable ] );
-
-        let btn_start       = create_btn('btn_start',   btn_style_action, _('Start'));
-        btn_start.onclick   = this.createServiceHandlerFn('start', 'btn_start');
-        let btn_restart     = create_btn('btn_restart', btn_style_action, _('Restart'));
-        btn_restart.onclick = this.createServiceHandlerFn('restart', 'btn_restart');
-        let btn_stop        = create_btn('btn_stop',    btn_style_warning, _('Stop'));
-        btn_stop.onclick    = this.createServiceHandlerFn('stop', 'btn_stop');
-        layout_append(_('Service daemons control'), null, [ btn_start, btn_restart, btn_stop ] );
-
         let btn_reset       = create_btn('btn_reset', btn_style_action, _('Reset settings'));
         btn_reset.onclick   = L.bind(this.dialogResetCfg, this);
         layout_append(_('Reset settings to default'), null, [ btn_reset ] );
@@ -378,20 +364,10 @@ return view.extend({
         btn_diag.onclick    = ui.createHandlerFn(this, () => { diagnost.openDiagnostDialog(this.pkg_arch) });
         layout_append('Diagnostic tools', null, [ btn_diag ] );
 
-        let btn_update      = create_btn('btn_update',  btn_style_action, _('Upgrade…'));
-        btn_update.onclick  = ui.createHandlerFn(this, () => { updater.openUpdateDialog(this.pkg_arch) });
-        layout_append(_('Upgrading the package'), null, [ btn_update ] );
-
         let elems = {
             "status": status_string,
-            "btn_enable": btn_enable,
-            "btn_disable": btn_disable,
-            "btn_start": btn_start,
-            "btn_restart": btn_restart,
-            "btn_stop": btn_stop,
             "btn_reset": btn_reset,
             "btn_diag": btn_diag,
-            "btn_update": btn_update,
         };
         this.setAppStatus(data, elems);
 
@@ -399,7 +375,7 @@ return view.extend({
         this.POLL.init( L.bind(this.statusPoll, this), 2000 );  // interval 2 sec
         this.POLL.start(500);  // first step after 500 ms
 
-        let page_title = tools.AppName;
+        let page_title = 'OpenWRTZapret';
         page_title += ' &nbsp ';
         if (pkgdict[tools.appName] === undefined || pkgdict[tools.appName] == '') {
             page_title += 'unknown version';
@@ -409,7 +385,8 @@ return view.extend({
         }
         let aux1 = E('em');
         let aux2 = E('em');
-        if (pkgdict[tools.appName] != pkgdict['luci-app-'+tools.appName]) {
+        if ((pkgdict[tools.appName] || '').replace(/-r\d+$/, '') !=
+            (pkgdict['luci-app-'+tools.appName] || '').replace(/-r\d+$/, '')) {
             let errtxt = 'LuCI APP v' + pkgdict['luci-app-'+tools.appName] + ' [ incorrect version! ]';
             aux1 = E('div', { 'class': 'label-status error' }, errtxt);
             aux2 = E('div', { }, '&nbsp');

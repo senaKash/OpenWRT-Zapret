@@ -1,10 +1,10 @@
 {
 	"admin/services/zapret2": {
-		"title": "Zapret2",
+		"title": "OpenWRTZapret",
 		"order": 62,
 		"action": {
 			"type": "alias",
-			"path": "admin/services/zapret2/service"
+			"path": "admin/services/zapret2/dashboard"
 		},
 		"depends": {
 			"acl": [ "luci-app-zapret2" ],
@@ -12,12 +12,30 @@
 		}
 	},
 
-	"admin/services/zapret2/service": {
-		"title": "Service",
+	"admin/services/zapret2/dashboard": {
+		"title": "Dashboard",
 		"order": 10,
 		"action": {
 			"type": "view",
+			"path": "zapret2/dashboard"
+		}
+	},
+
+	"admin/services/zapret2/service": {
+		"title": "Diagnostics & Tools",
+		"order": 15,
+		"action": {
+			"type": "view",
 			"path": "zapret2/service"
+		}
+	},
+
+	"admin/services/zapret2/strategies": {
+		"title": "Strategies",
+		"order": 18,
+		"action": {
+			"type": "view",
+			"path": "zapret2/strategies"
 		}
 	},
 

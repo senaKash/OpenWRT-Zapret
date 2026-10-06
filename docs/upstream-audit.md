@@ -1,0 +1,53 @@
+# Upstream audit
+
+Date: 2026-10-06. Base: [`remittor/zapret-openwrt`](https://github.com/remittor/zapret-openwrt/tree/master) `master` commit `124c9f7983dcd6fddf46d3e863fc67853017c4fd`, package version `0.9.20260307`; pinned engine commit `d3b3011000f103c5af161cc4e3167e80fd6928a2`. GitHub's default `zap1` branch packages Zapret 1, so `master` is the correct base. This is a **source audit**, not a test on the user's router.
+
+## Upstream architecture and packaging
+
+`zapret2/Makefile` downloads/builds the pinned bol-van engine and installs nfqws2, Lua/common modules, blockcheck, ipsets, the upstream OpenWrt init code and hooks under `/opt/zapret2`. It installs remittor's `init.d.sh` as `/etc/init.d/zapret2`, plus UCI defaults and `sync_config.sh`. The engine config, ipsets and custom scripts are conffiles. Dependencies include nftables, curl, gzip, coreutils, `kmod-nft-*`, `libnetfilter-queue` and related libraries. Pre/post-install hooks can stop/start the service, kill nfqws2 and restart firewall4; upgrades need care.
+
+`luci-app-zapret2/Makefile` builds an architecture-independent LuCI package depending on `zapret2`. The JS views are Service, Settings and Log Viewer. Service opens `diagnost.js` and `updater.js` modals. The upstream tree has **no app-specific rpcd backend**: it uses generic LuCI, service, fs/file and UCI RPCs. Its ACL grants broad `file.exec` patterns and direct file/UCI writes.
+
+| Reuse unchanged where working | Change in B/C or later | Add later |
+| --- | --- | --- |
+| Engine build, `/opt/zapret2` layout, procd/nftables/NFQUEUE code, UCI synchronization, hostlists/ipsets, Settings, diagnostics and log viewer | Product identity/menu, Service action path, state verification, method ACL, polling/error handling | Profiles, transaction journal and recovery worker, result cache, Test All, Flowseal converter/updater, bounded manager log |
+
+## Service buttons: implementation and root-cause analysis
+
+`service.js` binds Start, Stop, Restart, Enable and Disable to `tools.serviceActionEx()`. Start/Restart first run `/opt/zapret2/sync_config.sh` with `fs.exec`. All five actions then call `tools.handleServiceAction()`. In `tools.js` lines 80–84 this declares `object: 'luci'`, `method: 'setInitAction'`, `params: ['name','action']`, `expect: { result: false }`. A false result produces the exact text `Service action failed "zapret2 …": Command failed` (lines 147–159). The outer `service.js` catches and discards an exception, and no daemon/firewall verification follows.
+
+The strongest source-based cause is an **RPC API mismatch**: [current LuCI's `luci` plugin](https://github.com/openwrt/luci/blob/master/modules/luci-base/root/usr/share/rpcd/ucode/luci) has `getInitList` but no `setInitAction`; the [current Startup page](https://github.com/openwrt/luci/blob/master/modules/luci-mod-system/htdocs/luci-static/resources/view/system/startup.js) calls `rc.init`. [LuCI 24.10](https://github.com/openwrt/luci/blob/openwrt-24.10/modules/luci-base/root/usr/share/rpcd/ucode/luci) did expose `setInitAction`, so compatibility depends on the installed LuCI version. The [LuCI RPC client](https://github.com/openwrt/luci/blob/master/modules/luci-base/htdocs/luci-static/resources/rpc.js) substitutes `expect`'s default `false` when a reply lacks a boolean `result`; without `reject: true`, a missing method can therefore produce this precise `Command failed` text. The target is a custom SNAPSHOT; this is a strong hypothesis, **not a proven device cause** until `ubus -v list luci` and its installed RPC code are checked.
+
+If the legacy method exists, a false result could instead reflect a nonzero init return or RPC/ACL response mismatch. Remittor's 91-line `init.d.sh` sources the engine init script, overrides `enable`, `enabled`, `boot`, `start`, `restart`, and inherits `stop`/`disable`. Its `enable` changes UCI `run_on_boot` and calls `patch_luci_header_ut()`, which edits LuCI core files. Manual success of `stop_fw` and `stop_daemons` confirms those component actions on the user's installation, but does not establish why the generic RPC action failed.
+
+**Minimum safe fix in Phase C:** introduce named rpcd methods for `status`, `start`, `stop`, `restart`, `enable`, `disable`. The browser supplies no command string. A serialized backend calls only fixed, audited Zapret2 actions, then verifies the process/procd instance and Zapret-owned NFQUEUE rules; it distinguishes boot enablement from runtime state. For nftables the tentative order is start daemon then firewall, stop firewall then daemon, restart via stop/start, subject to the installed source/config audit. Update only the five Service handlers and corresponding ACL first. Directly switching to [`rc.init`](https://github.com/openwrt/rpcd/blob/master/rc.c) is insufficient: rpcd completes that request without relaying the child exit status.
+
+## Init, config, firewall and state
+
+`zapret2/init.d.sh` sources `comfunc.sh`, validates `/opt/zapret2/config`, and sources the [bol-van OpenWrt init script](https://github.com/bol-van/zapret2/blob/master/init.d/openwrt/zapret2). The latter uses procd, forms nfqws2 arguments and exposes separate daemon/firewall methods. Its [OpenWrt functions](https://github.com/bol-van/zapret2/blob/master/init.d/openwrt/functions) load the shell config. The [nft helper](https://github.com/bol-van/zapret2/blob/master/common/nft.sh) creates Zapret-owned table/queue rules from configured ports and queue number; `list_table` ends with unconditional `return 0`. A successful init exit or existing table alone therefore does not prove working NFQUEUE delivery.
+
+Settings edit `/etc/config/zapret2` section `config`. `sync_config.sh` copies selected fields, including `NFQWS2_OPT` and ports, through `/opt/zapret2/config.new` to `/opt/zapret2/config` after shell syntax validation. `config.default` is the initial shell config. `def-cfg.sh` contains built-in strategy definitions used by Reset; `service.js` scrapes names from it with awk. That list is not a profile catalog. Apply/Test must snapshot UCI and runtime config, preserve unrelated options/custom.d files, and use a validated conversion into the existing fields.
+
+Current status combines `luci.getInitList` boot state, `service.list` procd data and BusyBox `ps`. It does not inspect nft queue rules. `tools.decode_svc_info()` can assign an undefined `statusDict.started`, while the displayed status mostly derives from daemon counts. Service polling reruns package enumeration and other probes every two seconds. Later UI should obtain one structured backend status and reduce work while visible.
+
+## Sites check and DPI check
+
+`diagnost.js` invokes `/opt/zapret2/dwc.sh` through `tools.execAndRead()` and `script-exec.sh`, streaming a temporary log to a modal. Sites check (`-s`) uses a built-in URL list including YouTube, GoogleVideo and Discord. DPI check downloads the [hyperion-cs/dpi-checkers](https://github.com/hyperion-cs/dpi-checkers) suite. `dwc.sh` makes real HTTPS `curl` requests; optional `dig` selects a resolver, and per-target files record response artifacts. Thus its network-probe approach and endpoints can inform Strategy Test.
+
+The diagnostic output is free text, labels success mainly by received body size, and the script returns success at the end even when individual sites fail. Its downloaded suite is parsed with shell field splitting rather than a JSON parser. It has no Discord Voice transport check. Strategy Test needs structured per-target HTTP status, latency, error, timestamp and a separate UDP/STUN transport-only result. Preserve the existing diagnostic modal as its own tool.
+
+## Profiles, Flowseal and merge boundaries
+
+Internal profiles need source namespace (`builtin`, `flowseal`, `user`), ID, source version, ports, validated nfqws2 option segments, resource references, compatibility and content hash. Generate the current `NFQWS2_ENABLE`, TCP/UDP ports, packet limits, filter mode and `NFQWS2_OPT` fields; never overwrite unrelated settings. A changed hash invalidates prior PASS.
+
+[Flowseal's current `general (ALT).bat`](https://github.com/Flowseal/zapret-discord-youtube/blob/main/general%20(ALT).bat) contains `service.bat` calls, `%BIN%`/`%LISTS%` variables, `--wf-tcp/udp`, multiple `--new` segments, list/blob references and zapret1 `--dpi-desync-*` options. Conversion requires a tokenizer, AST, whitelist, verified mappings and resource validation. The user's local working BAT and companion files are the acceptance fixture because upstream main can differ. Never run downloaded BAT/CMD/EXE/PS1. Flowseal sync cannot update the engine or active profile.
+
+The largest future merge-conflict surfaces are `service.js`, `tools.js`, ACL/menu JSON, `zapret2/Makefile`, `init.d.sh`, `sync_config.sh` and `def-cfg.sh`. Add new manager code in new files when possible, keep the imported Git ancestry and compare against `upstream/master` before merges. Do not change upstream engine internals without a specific defect.
+
+## Security, licensing, first edits and evidence needed
+
+The current ACL's broad `file.exec` patterns and direct writable files are unsuitable for new profile/update actions. `script-exec.sh` accepts a caller-provided executable path. Narrow new actions immediately and reduce legacy grants in stages while preserving Settings/Diagnostics. Validate profile IDs, paths, options, downloaded archives and shell-sourced config values. The existing [LICENSE](../LICENSE) is MIT with bol-van copyright; remittor files have their own headers. [Flowseal's license](https://github.com/Flowseal/zapret-discord-youtube/blob/main/LICENSE.txt) is MIT for its code/data with separate WinDivert terms for Windows binaries. No Flowseal files were imported. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+
+**Phase B first files:** `README.md`, LuCI menu JSON, a new dashboard view/style, and package metadata only after deciding a safe migration path. **Phase C first files:** `service.js`, `tools.js`, ACL JSON, a new rpcd ucode method file, and a fixed service adapter. Local mock tests cover dispatch, failure propagation, partial states, idempotence, locking and ACL denial. No router mutation during this audit.
+
+Read-only router evidence needed before a definitive cause and live adapter: `ubus -v list luci`, `ubus -v list rc`, `ubus call service list '{"name":"zapret2","verbose":true}'`, installed `/etc/init.d/zapret2` and sourced target, `/etc/config/zapret2`, `/opt/zapret2/config`, `readlink -f /etc/init.d/zapret2`, scoped nft table/rules, and `logread` around a failed button click. Mask private domains or addresses before sharing.

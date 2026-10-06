@@ -37,11 +37,8 @@ env:
   FAKE_BUILD: ${{ github.event.inputs.fake_build == 'true' }}
   MAX_SPEED: ${{ github.event.inputs.max_speed != 'false' }}
   TAG_SUFFIX: ${{ github.event.inputs.fake_build == 'true' && '-fake' || github.event.inputs.test_build == 'true' && '-test' || '' }}
-  REPO_NAME: zapret-openwrt
-  REPO_URL: https://github.com/remittor/zapret-openwrt
-  REPO_LNK: remittor/zapret-openwrt
-  REPO_BRANCH: master
-  PKGDIR: ${{ github.workspace }}/zapret-openwrt
+  REPO_NAME: openwrtzapret
+  PKGDIR: ${{ github.workspace }}/openwrtzapret
   SDKDIR: /builder
   BUILD_DATE: unknown
   REPO_DATE: unknown
@@ -62,24 +59,27 @@ jobs:
       test_build: ${{ env.TEST_BUILD }}
       fake_build: ${{ env.FAKE_BUILD }}
     steps:
-      - name: Get repo data via GH API
+      - name: Checkout current repository and ref
+        uses: actions/checkout@v4
+        with:
+          path: openwrtzapret
+
+      - name: Record checked out source
         id: gh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: ${{ env.PKGDIR }}
         run: |
-          echo "Tag name from GITHUB_REF_NAME: $GITHUB_REF_NAME"
-          echo "Tag name from github.ref_name: ${{ github.ref_name }}"
-          BRANCH=$(gh api repos/$REPO_LNK --jq '.default_branch')
-          REPO_DATE=$(gh api repos/$REPO_LNK/commits/$BRANCH --jq '.commit.committer.date')
+          REPO_DATE=$(git show -s --format=%cI HEAD)
+          SHA=$(git rev-parse HEAD)
+          echo "Building $GITHUB_REPOSITORY at $SHA ($GITHUB_REF)"
           BUILD_DATE=$( date --utc +'%Y%m%d' )
           FW_DATE=$( date --utc +'%Y-%m-%d' )
           {
             echo "tag=$GITHUB_REF_NAME"
-            echo "date=$(date --utc -d $REPO_DATE +%Y%m%d)"
-            echo "sha=$(gh api repos/$REPO_LNK/commits/$BRANCH --jq '.sha[0:7]')"
-            echo "url=$(gh api repos/$REPO_LNK/commits/$BRANCH --jq '.html_url')"
+            echo "date=$(date --utc -d "$REPO_DATE" +%Y%m%d)"
+            echo "sha=$SHA"
+            echo "url=https://github.com/$GITHUB_REPOSITORY/commit/$SHA"
             echo "message<<EOF"
-            gh api repos/$REPO_LNK/commits/$BRANCH --jq '.commit.message'
+            git show -s --format=%B HEAD
             echo EOF
             echo "build_date=$BUILD_DATE"
             echo "fw_date=$FW_DATE"
@@ -186,8 +186,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.REPO_LNK }}
           path: ${{ env.REPO_NAME }}
+
+      - name: Log source SHA
+        run: |
+          echo "Building $GITHUB_REPOSITORY at $(git -C "$PKGDIR" rev-parse HEAD)"
 
       - name: Fix SDK paths
         run: |
@@ -290,9 +293,9 @@ jobs:
         env:
           ARCH_TAG: ${{ matrix.arch }}
         run: |
-          PKGLIST="package/zapret-openwrt/zapret2/compile"
+          PKGLIST="package/openwrtzapret/zapret2/compile"
           if [ "$ARCH_TAG" = "$LUCI_ARCH" ]; then
-              PKGLIST="$PKGLIST package/zapret-openwrt/luci-app-zapret2/compile"
+              PKGLIST="$PKGLIST package/openwrtzapret/luci-app-zapret2/compile"
           fi
           MAKE_JOBS=$(nproc)
           echo "$MAKE_JOBS thread compile"
@@ -360,6 +363,8 @@ jobs:
           name: logs-${{ matrix.branch }}-${{ matrix.arch }}
 
   release:
+    # Candidate builds are artifacts only until a fork release source is approved and router tested.
+    if: false
     needs: [ check, build ]
     permissions:
       contents: write

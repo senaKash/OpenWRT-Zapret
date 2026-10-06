@@ -15,6 +15,8 @@ const btn_style_warning  = 'btn cbi-button-negative';
 const btn_style_success  = 'btn cbi-button-success important';
 
 const fn_update_pkg_sh   = '/opt/'+tools.appName+'/update-pkg.sh';
+// No OpenWRTZapret package release source exists yet.
+const pkgUpgradeConfigured = false;
 
 return baseclass.extend({
     releasesUrlPrefix : 'https://raw.githubusercontent.com/remittor/zapret-openwrt/gh-pages/releases/',
@@ -45,6 +47,10 @@ return baseclass.extend({
 
     checkUpdates: async function(ev)
     {
+        if (!pkgUpgradeConfigured) {
+            ui.addNotification(null, E('p', _('Automatic OpenWRTZapret updates are not configured yet.')));
+            return;
+        }
         this._action = 'checkUpdates';
         this.setStage(1);
         this.pkg_url = null;
@@ -65,6 +71,10 @@ return baseclass.extend({
 
     installUpdates: async function(ev)
     {
+        if (!pkgUpgradeConfigured) {
+            ui.addNotification(null, E('p', _('Automatic OpenWRTZapret updates are not configured yet.')));
+            return;
+        }
         if (!this.pkg_url || this.pkg_url.length < 10) {
             this.appendLog('ERROR: pkg_url = null');
             this.setStage(9);
@@ -136,6 +146,10 @@ return baseclass.extend({
 
     openUpdateDialog: function(pkg_arch)
     {
+        if (!pkgUpgradeConfigured) {
+            ui.addNotification(null, E('p', _('Automatic OpenWRTZapret updates are not configured yet.')));
+            return;
+        }
         if (tools.checkUnsavedChanges()) {
             ui.addNotification(null, E('p', _('You have unapplied changes')));
             return;

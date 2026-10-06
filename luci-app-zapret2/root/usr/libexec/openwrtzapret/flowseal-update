@@ -1,0 +1,305 @@
+#!/bin/sh
+# OpenWRTZapret Flowseal updater. Downloads release data as inert input only.
+set -u
+
+API_URL='https://api.github.com/repos/Flowseal/zapret-discord-youtube/releases/latest'
+RELEASE_BASE='https://github.com/Flowseal/zapret-discord-youtube/releases/download'
+STATE_ROOT='/etc/openwrtzapret/flowseal'
+PROFILE_ROOT='/etc/openwrtzapret/profiles/flowseal'
+ASSET_ROOT="$STATE_ROOT/assets"
+RUNTIME_ASSET_ROOT="/etc/openwrtzapret/flowseal/assets"
+IMPORT_AWK='/usr/libexec/openwrtzapret/flowseal-import.awk'
+MAX_ARCHIVE=16777216
+MAX_MEMBER=8388608
+MAX_TOTAL=33554432
+MAX_SELECTED=50331648
+MAX_ENTRIES=5000
+MAX_PROFILES=64
+
+fail_json() {
+	local code="$1" stage="$2"
+	printf '{"ok":false,"mode":"flowseal_update","stage":"%s","error":"%s"}\n' "$stage" "$code"
+}
+
+valid_version() {
+	[ -n "$1" ] && [ "${#1}" -le 64 ] || return 1
+	case "$1" in *[!A-Za-z0-9._-]*) return 1;; esac
+}
+
+slugify() {
+	printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z' | sed 's/[^a-z0-9][^a-z0-9]*/-/g; s/^-//; s/-$//' | cut -c1-80
+}
+
+local_version() {
+	if [ -r "$STATE_ROOT/metadata.json" ]; then
+		jsonfilter -i "$STATE_ROOT/metadata.json" -e '@.source_version' 2>/dev/null || :
+	fi
+}
+
+fetch_latest() {
+	local out="$1" version
+	command -v curl >/dev/null 2>&1 || return 2
+	command -v jsonfilter >/dev/null 2>&1 || return 2
+	curl -fsSL --connect-timeout 10 --max-time 30 --retry 1 \
+		-H 'Accept: application/vnd.github+json' -H 'User-Agent: OpenWRTZapret' \
+		-o "$out" "$API_URL" || return 3
+	[ "$(wc -c < "$out" 2>/dev/null)" -le 1048576 ] || return 4
+	version=$(jsonfilter -i "$out" -e '@.tag_name' 2>/dev/null) || return 5
+	valid_version "$version" || return 5
+	printf '%s' "$version"
+}
+
+status_json() {
+	local localv
+	localv=$(local_version); [ -n "$localv" ] || localv=''
+	printf '{"ok":true,"local_version":%s,"remote_version":null,"update_available":null' \
+		"$( [ -n "$localv" ] && printf '"%s"' "$localv" || printf 'null' )"
+	if [ -r "$STATE_ROOT/report.json" ]; then
+		printf ',"report":'
+		cat "$STATE_ROOT/report.json"
+	fi
+	printf '}\n'
+}
+
+check_json() {
+	local tmp remote rc localv avail
+	tmp=$(mktemp /tmp/openwrtzapret-flowseal-api.XXXXXX) || { fail_json temp_failed check; return 0; }
+	trap "rm -f '$tmp'" EXIT INT TERM
+	remote=$(fetch_latest "$tmp"); rc=$?
+	if [ "$rc" -ne 0 ]; then fail_json remote_check_failed check; return 0; fi
+	localv=$(local_version); [ -n "$localv" ] || localv=''
+	if [ -n "$localv" ] && [ "$localv" = "$remote" ]; then avail=false; else avail=true; fi
+	printf '{"ok":true,"local_version":%s,"remote_version":"%s","update_available":%s}\n' \
+		"$( [ -n "$localv" ] && printf '"%s"' "$localv" || printf 'null' )" "$remote" "$avail"
+}
+
+safe_member_name() {
+	local name="$1"
+	[ -n "$name" ] || return 1
+	case "$name" in /*|../*|*/../*|*/..|*\\*) return 1;; esac
+	case "$name" in *"$(printf '\r')"*|*"$(printf '\t')"*) return 1;; esac
+	return 0
+}
+
+selected_member() {
+	local name="$1" base
+	base=${name##*/}
+	case "$base" in general*.bat|GENERAL*.BAT|General*.bat) return 0;; esac
+	case "$name" in */bin/*.bin|bin/*.bin|*/lists/*.txt|lists/*.txt) return 0;; esac
+	return 1
+}
+
+extract_selected() {
+	local archive="$1" extract="$2" list="$3" selected="$4" count member lines line member_size selected_total=0
+	tar -tzf "$archive" > "$list" 2>/dev/null || return 1
+	count=$(wc -l < "$list" 2>/dev/null); [ "$count" -le "$MAX_ENTRIES" ] || return 2
+	: > "$selected"
+	while IFS= read -r member; do
+		safe_member_name "$member" || return 3
+		if selected_member "$member"; then printf '%s\n' "$member" >> "$selected"; fi
+	done < "$list"
+	[ -s "$selected" ] || return 4
+	# Duplicate archive names are ambiguous (a later entry could replace a validated one).
+	awk 'seen[$0]++ { exit 1 }' "$selected" || return 5
+	while IFS= read -r member; do
+		lines=$(tar -tvzf "$archive" "$member" 2>/dev/null) || return 6
+		[ "$(printf '%s\n' "$lines" | awk 'NF{n++} END{print n+0}')" -eq 1 ] || return 6
+		line=$lines
+		case "$line" in -*) :;; *) return 7;; esac
+		# GNU and BusyBox tar both expose regular-file size as field 3 in -tv output.
+		member_size=$(printf '%s\n' "$line" | awk '{print $3}')
+		case "$member_size" in ''|*[!0-9]*) return 8;; esac
+		[ "$member_size" -le "$MAX_MEMBER" ] || return 8
+		selected_total=$((selected_total + member_size)); [ "$selected_total" -le "$MAX_SELECTED" ] || return 8
+		tar -xzf "$archive" -C "$extract" "$member" 2>/dev/null || return 9
+	done < "$selected"
+	return 0
+}
+
+find_release_root() {
+	local extract="$1" list="$2" count root bat dir
+	find "$extract" -type f -name 'general*.bat' 2>/dev/null | sort > "$list"
+	count=$(wc -l < "$list" 2>/dev/null)
+	[ "$count" -gt 0 ] && [ "$count" -le "$MAX_PROFILES" ] || return 1
+	root=''
+	while IFS= read -r bat; do
+		[ -f "$bat" ] && [ ! -L "$bat" ] || return 1
+		[ "$(wc -c < "$bat")" -le 262144 ] || return 1
+		dir=${bat%/*}
+		if [ -z "$root" ]; then root="$dir"; elif [ "$root" != "$dir" ]; then return 1; fi
+	done < "$list"
+	[ -d "$root/bin" ] && [ -d "$root/lists" ] || return 1
+	printf '%s' "$root"
+}
+
+copy_requirement() {
+	local req="$1" runtime_base="$2" source_root="$3" asset_stage="$4" rel src dst size
+	case "$req" in "$runtime_base"/*) rel=${req#"$runtime_base"/};; *) return 2;; esac
+	case "$rel" in bin/*.bin|lists/*.txt) :;; *) return 2;; esac
+	case "$rel" in *..*) return 2;; esac
+	src="$source_root/$rel"; dst="$asset_stage/$rel"
+	[ -f "$src" ] && [ ! -L "$src" ] || return 1
+	[ -f "$dst" ] && return 0
+	size=$(wc -c < "$src" 2>/dev/null) || return 1
+	[ "$size" -le "$MAX_MEMBER" ] || return 3
+	mkdir -p "${dst%/*}" || return 1
+	cp "$src" "$dst" || return 1
+	FLOWSEAL_TOTAL=$((FLOWSEAL_TOTAL + size)); [ "$FLOWSEAL_TOTAL" -le "$MAX_TOTAL" ] || return 3
+	return 0
+}
+
+copy_requirements_from_canon() {
+	local canon="$1" runtime_base="$2" source_root="$3" asset_stage="$4" key csv oldifs req rc
+	FLOWSEAL_MISSING=''
+	for key in requirements.blobs requirements.hostlists requirements.ipsets; do
+		csv=$(sed -n "s/^${key}=//p" "$canon" | tail -n 1)
+		[ -n "$csv" ] || continue
+		oldifs=$IFS; IFS=,
+		set -- $csv
+		IFS=$oldifs
+		for req in "$@"; do
+			[ -n "$req" ] || continue
+			copy_requirement "$req" "$runtime_base" "$source_root" "$asset_stage" || {
+				case "$?" in 1) [ -n "$FLOWSEAL_MISSING" ] || FLOWSEAL_MISSING="missing asset:${req##*/}";; *) return 1;; esac
+			}
+		done
+	done
+	[ -z "$FLOWSEAL_MISSING" ] || return 10
+	return 0
+}
+
+import_one() {
+	local bat="$1" version="$2" source_root="$3" profiles_stage="$4" asset_stage="$5" manifest="$6" file stem key vslug id runtime_base work canon strategy out rc missing content strategy_hash compatible
+	file=${bat##*/}; stem=${file%.[bB][aA][tT]}
+	key=$(slugify "$stem"); [ -n "$key" ] || key=strategy
+	vslug=$(slugify "$version"); [ -n "$vslug" ] || return 1
+	id="flowseal-$vslug-$key"
+	case "$id" in *[!a-z0-9_-]*) return 1;; esac
+	runtime_base="$RUNTIME_ASSET_ROOT/$version"
+	work=$(mktemp -d /tmp/openwrtzapret-flowseal-import.XXXXXX) || return 1
+	canon="$work/canon"; strategy="$work/strategy"; out="$work/profile.json"
+	awk -v runtime_base="$runtime_base" -v game_tcp=12 -v game_udp=12 -v game_mode=none \
+		-v profile_id="$id" -v profile_name="$stem" -v source_version="$version" \
+		-v original_file="$file" -v strategy_key="$key" -v canon_file="$canon" \
+		-v strategy_file="$strategy" -v out_file="$out" -f "$IMPORT_AWK" "$bat" || { rm -rf "$work"; return 1; }
+	rc=0; copy_requirements_from_canon "$canon" "$runtime_base" "$source_root" "$asset_stage" || rc=$?
+	if [ "$rc" -eq 10 ]; then
+		missing=$FLOWSEAL_MISSING
+		awk -v runtime_base="$runtime_base" -v game_tcp=12 -v game_udp=12 -v game_mode=none \
+			-v pre_unsupported="${missing:-missing asset}" -v profile_id="$id" -v profile_name="$stem" -v source_version="$version" \
+			-v original_file="$file" -v strategy_key="$key" -v canon_file="$canon" \
+			-v strategy_file="$strategy" -v out_file="$out" -f "$IMPORT_AWK" "$bat" || { rm -rf "$work"; return 1; }
+	elif [ "$rc" -ne 0 ]; then rm -rf "$work"; return 1; fi
+	content=$(sha256sum "$canon" 2>/dev/null); content=${content%% *}
+	strategy_hash=$(sha256sum "$strategy" 2>/dev/null); strategy_hash=${strategy_hash%% *}
+	case "$content$strategy_hash" in *[!0-9a-f]*) rm -rf "$work"; return 1;; esac
+	sed -e "s/__CONTENT_HASH__/$content/g" -e "s/__STRATEGY_HASH__/$strategy_hash/g" "$out" > "$profiles_stage/$id.json" || { rm -rf "$work"; return 1; }
+	compatible=$(jsonfilter -i "$profiles_stage/$id.json" -e '@.compatible' 2>/dev/null) || compatible=false
+	printf '%s\tsha256:%s\t%s\t%s\n' "$key" "$strategy_hash" "$id" "$compatible" >> "$manifest"
+	rm -rf "$work"
+	return 0
+}
+
+make_diff() {
+	local new="$1" old="$2" out="$3"
+	awk -F '\t' '
+		FILENAME==ARGV[1] { if (NF>=2) old[$1]=$2; next }
+		NF>=4 {
+			status="Added";
+			if ($4 != "true") status="Unsupported";
+			else if ($1 in old) status=(old[$1]==$2 ? "Unchanged" : "Changed");
+			print $1 "\t" $2 "\t" $3 "\t" $4 "\t" status
+		}
+	' "$old" "$new" > "$out"
+}
+
+make_report() {
+	local version="$1" archive_hash="$2" diff="$3" out="$4"
+	awk -F '\t' -v version="$version" -v ah="$archive_hash" '
+		function esc(s){gsub(/\\/,"\\\\",s);gsub(/\"/,"\\\"",s);return s}
+		{ n++; key[n]=$1; hash[n]=$2; id[n]=$3; compat[n]=$4; st[n]=$5; count[$5]++ }
+		END {
+			printf "{\"source\":\"flowseal\",\"source_version\":\"%s\",\"archive_sha256\":\"sha256:%s\",", esc(version), ah;
+			printf "\"counts\":{\"added\":%d,\"changed\":%d,\"unchanged\":%d,\"unsupported\":%d},\"strategies\":[", count["Added"]+0,count["Changed"]+0,count["Unchanged"]+0,count["Unsupported"]+0;
+			for(i=1;i<=n;i++){if(i>1)printf ","; printf "{\"strategy_key\":\"%s\",\"profile_id\":\"%s\",\"strategy_hash\":\"%s\",\"compatible\":%s,\"status\":\"%s\"}",esc(key[i]),esc(id[i]),esc(hash[i]),compat[i],st[i]}
+			print "]}"
+		}
+	' "$diff" > "$out"
+}
+
+install_staged() {
+	local version="$1" profiles_stage="$2" asset_stage="$3" manifest="$4" report="$5" jobdir="$6" archive_hash="$7" asset_final asset_tmp active file base ptmp id now
+	mkdir -p "$STATE_ROOT" "$ASSET_ROOT" "${PROFILE_ROOT%/*}" || return 1
+	chmod 700 "$STATE_ROOT" "$ASSET_ROOT" "${PROFILE_ROOT%/*}" 2>/dev/null || :
+	asset_final="$ASSET_ROOT/$version"
+	if [ ! -d "$asset_final" ]; then
+		asset_tmp="$ASSET_ROOT/.${version}.new.$$"
+		rm -rf "$asset_tmp"; mkdir -p "$asset_tmp" || return 1
+		cp -R "$asset_stage"/. "$asset_tmp"/ || { rm -rf "$asset_tmp"; return 1; }
+		mv "$asset_tmp" "$asset_final" || { rm -rf "$asset_tmp"; return 1; }
+	fi
+	mkdir -p "$PROFILE_ROOT" || return 1
+	active=$(uci -q get zapret2.config.active_profile 2>/dev/null) || active=''
+	for file in "$profiles_stage"/*.json; do
+		[ -f "$file" ] || continue
+		base=${file##*/}; ptmp="$PROFILE_ROOT/.${base}.new.$$"
+		cp "$file" "$ptmp" && chmod 600 "$ptmp" && mv -f "$ptmp" "$PROFILE_ROOT/$base" || { rm -f "$ptmp"; return 1; }
+	done
+	# Remove old Flowseal profiles only after the new set is fully installed. Never remove the active one.
+	for file in "$PROFILE_ROOT"/*.json; do
+		[ -f "$file" ] || continue
+		base=${file##*/}; id=${base%.json}
+		[ "$id" = "$active" ] && continue
+		[ -f "$profiles_stage/$base" ] || rm -f "$file"
+	done
+	cp "$manifest" "$STATE_ROOT/manifest.tsv.tmp.$$" && mv -f "$STATE_ROOT/manifest.tsv.tmp.$$" "$STATE_ROOT/manifest.tsv" || return 1
+	cp "$report" "$STATE_ROOT/report.json.tmp.$$" && mv -f "$STATE_ROOT/report.json.tmp.$$" "$STATE_ROOT/report.json" || return 1
+	now=$(date +%s)
+	printf '{"source":"flowseal","source_version":"%s","archive_sha256":"sha256:%s","updated_at":%s}\n' "$version" "$archive_hash" "$now" > "$STATE_ROOT/metadata.json.tmp.$$" || return 1
+	mv -f "$STATE_ROOT/metadata.json.tmp.$$" "$STATE_ROOT/metadata.json" || return 1
+	: > "$jobdir/flowseal_committed" 2>/dev/null || :
+	return 0
+}
+
+run_update() {
+	local jobdir="$1" tmp api remote rc archive url size archive_hash extract root profiles assets manifest old
+	case "$jobdir" in /etc/openwrtzapret/state/jobs/[0-9]*-[0-9]*) :;; *) fail_json invalid_job_dir validation; return 0;; esac
+	[ -d "$jobdir" ] && [ ! -L "$jobdir" ] || { fail_json invalid_job_dir validation; return 0; }
+	tmp=$(mktemp -d /tmp/openwrtzapret-flowseal-update.XXXXXX) || { fail_json temp_failed prepare; return 0; }
+	trap "rm -rf '$tmp'" EXIT INT TERM
+	api="$tmp/api.json"; remote=$(fetch_latest "$api"); rc=$?
+	if [ "$rc" -ne 0 ]; then fail_json remote_check_failed check > "$jobdir/result.json"; return 1; fi
+	[ ! -e "$jobdir/cancel" ] || { printf '{"ok":true,"mode":"flowseal_update","status":"CANCELLED","source_version":"%s"}\n' "$remote" > "$jobdir/result.json"; return 130; }
+	archive="$tmp/release.tar.gz"
+	url="$RELEASE_BASE/$remote/zapret-discord-youtube-$remote.tar.gz"
+	curl -fsSL --connect-timeout 10 --max-time 180 --retry 2 -H 'User-Agent: OpenWRTZapret' -o "$archive" "$url" || { fail_json release_download_failed download > "$jobdir/result.json"; return 1; }
+	size=$(wc -c < "$archive" 2>/dev/null) || size=$((MAX_ARCHIVE+1)); [ "$size" -le "$MAX_ARCHIVE" ] || { fail_json archive_too_large validation > "$jobdir/result.json"; return 1; }
+	archive_hash=$(sha256sum "$archive" 2>/dev/null); archive_hash=${archive_hash%% *}; case "$archive_hash" in *[!0-9a-f]*) fail_json hash_failed validation > "$jobdir/result.json"; return 1;; esac
+	[ ! -e "$jobdir/cancel" ] || { printf '{"ok":true,"mode":"flowseal_update","status":"CANCELLED","source_version":"%s"}\n' "$remote" > "$jobdir/result.json"; return 130; }
+	extract="$tmp/extract"; mkdir -p "$extract"
+	extract_selected "$archive" "$extract" "$tmp/members" "$tmp/selected" || { fail_json unsafe_or_invalid_archive extract > "$jobdir/result.json"; return 1; }
+	root=$(find_release_root "$extract" "$tmp/bats") || { fail_json invalid_release_layout extract > "$jobdir/result.json"; return 1; }
+	profiles="$tmp/profiles"; assets="$tmp/assets"; mkdir -p "$profiles" "$assets"; manifest="$tmp/manifest.tsv"; : > "$manifest"; FLOWSEAL_TOTAL=0
+	while IFS= read -r bat; do
+		[ ! -e "$jobdir/cancel" ] || { printf '{"ok":true,"mode":"flowseal_update","status":"CANCELLED","source_version":"%s"}\n' "$remote" > "$jobdir/result.json"; return 130; }
+		import_one "$bat" "$remote" "$root" "$profiles" "$assets" "$manifest" || { fail_json import_failed import > "$jobdir/result.json"; return 1; }
+	done < "$tmp/bats"
+	old="$STATE_ROOT/manifest.tsv"; [ -r "$old" ] || old="$tmp/empty"; : > "$tmp/empty"
+	make_diff "$manifest" "$old" "$tmp/diff.tsv" || { fail_json diff_failed import > "$jobdir/result.json"; return 1; }
+	make_report "$remote" "$archive_hash" "$tmp/diff.tsv" "$tmp/report.json" || { fail_json report_failed import > "$jobdir/result.json"; return 1; }
+	[ ! -e "$jobdir/cancel" ] || { printf '{"ok":true,"mode":"flowseal_update","status":"CANCELLED","source_version":"%s"}\n' "$remote" > "$jobdir/result.json"; return 130; }
+	install_staged "$remote" "$profiles" "$assets" "$manifest" "$tmp/report.json" "$jobdir" "$archive_hash" || { fail_json install_failed install > "$jobdir/result.json"; return 1; }
+	# Job result wraps the persistent diff report without changing active_profile or /opt/zapret2/config.
+	printf '{"ok":true,"mode":"flowseal_update","status":"DONE","source_version":"%s","report":' "$remote" > "$jobdir/result.json.tmp.$$"
+	cat "$tmp/report.json" >> "$jobdir/result.json.tmp.$$"; printf '}\n' >> "$jobdir/result.json.tmp.$$"
+	mv -f "$jobdir/result.json.tmp.$$" "$jobdir/result.json"
+	rm -rf "$tmp"; trap - EXIT INT TERM
+	return 0
+}
+
+case "${1:-}" in
+	status) [ "$#" -eq 1 ] && status_json || exit 64;;
+	check) [ "$#" -eq 1 ] && check_json || exit 64;;
+	run) [ "$#" -eq 2 ] && run_update "$2" || exit 64;;
+	*) exit 64;;
+esac

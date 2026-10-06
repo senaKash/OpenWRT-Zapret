@@ -12,9 +12,8 @@ permissions:
 
 jobs:
   update-json:
-    if: |
-      github.event_name != 'workflow_run' ||
-      github.event.workflow_run.conclusion == 'success'
+    # No automatic package release feed exists for OpenWRTZapret yet.
+    if: false
 
     runs-on: ubuntu-latest
 

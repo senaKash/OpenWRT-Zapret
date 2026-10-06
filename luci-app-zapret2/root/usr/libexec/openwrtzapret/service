@@ -1,0 +1,1031 @@
+#!/bin/sh
+# Fixed Zapret2 runtime adapter. No request parameter becomes a command or path.
+OWZ_LOCK=/var/run/openwrtzapret.lock
+OWZ_DATA=/etc/openwrtzapret/state
+OWZ_JOB_ROOT=$OWZ_DATA/jobs
+OWZ_RESULT_ROOT=$OWZ_DATA/results
+OWZ_JOURNAL=$OWZ_DATA/journal
+OWZ_FLOWSEAL_UPDATE=/usr/libexec/openwrtzapret/flowseal-update
+owz_init() { /etc/init.d/zapret2 "$1" >/dev/null 2>&1; }
+owz_sync() {
+	if [ "${1:-}" = skip_active ]; then
+		OWZ_PROFILE_SKIP_ACTIVE=1 /opt/zapret2/sync_config.sh >/dev/null 2>&1
+	else
+		/opt/zapret2/sync_config.sh >/dev/null 2>&1
+	fi
+}
+owz_sleep() { sleep 1; }
+owz_proc_exists() { [ -d "/proc/$1" ]; }
+owz_valid_table_name() {
+	case "$1" in ''|*[!a-zA-Z0-9_]*) return 1;; esac
+}
+
+owz_table_name() {
+	local name
+	[ -r /opt/zapret2/config ] || return 1
+	name=$(sed -n 's/^ZAPRET_NFT_TABLE=//p' /opt/zapret2/config 2>/dev/null | tail -n 1)
+	[ -n "$name" ] || name=zapret
+	case "$name" in
+		\'*\') name=${name#\'}; name=${name%\'};;
+		\"*\") name=${name#\"}; name=${name%\"};;
+		*\'*|*\") return 1;;
+	esac
+	owz_valid_table_name "$name" || return 1
+	printf '%s' "$name"
+}
+
+owz_probe_daemon() {
+	local pids pid exe found=false unknown=false
+	command -v pidof >/dev/null 2>&1 || return 2
+	pids=$(pidof nfqws2 2>/dev/null) || return 1
+	for pid in $pids; do
+		case "$pid" in *[!0-9]*|'') return 2;; esac
+		owz_proc_exists "$pid" || continue
+		exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || { unknown=true; continue; }
+		exe=${exe% (deleted)}
+		# The pinned engine uses nfq2; other Zapret2 layouts can keep nfqws2 below /opt/zapret2.
+		case "$exe" in /opt/zapret2/*/nfqws2|/opt/zapret2/nfqws2) found=true;; esac
+	done
+	[ "$found" = true ] && return 0
+	[ "$unknown" = true ] && return 2
+	return 1
+}
+
+owz_probe_firewall() {
+	local table tables rules assessment
+	OWZ_TABLE_STATE=absent OWZ_HOOKED=false OWZ_QUEUE_RULE=false
+	table=$(owz_table_name) || return 2
+	tables=$(nft list tables 2>/dev/null) || return 2
+	if ! printf '%s\n' "$tables" | grep -Fqx "table inet $table"; then return 1; fi
+	OWZ_TABLE_STATE=present
+	rules=$(nft -t list table inet "$table" 2>/dev/null) || return 2
+	if printf '%s\n' "$rules" | grep -Eq '^[[:space:]]*flags dormant'; then
+		OWZ_TABLE_STATE=dormant
+		return 0
+	fi
+	assessment=$(printf '%s\n' "$rules" | awk '
+		/^[[:space:]]*chain[[:space:]]+[A-Za-z0-9_]+[[:space:]]*\{/ {
+			chain=$2; sub(/\{.*/, "", chain); chains[chain]=1; chain_count++; next
+		}
+		chain != "" && /}/ { chain=""; next }
+		chain != "" {
+			if ($0 ~ /type[[:space:]]+[^;]+hook[[:space:]]+(forward|output|prerouting|input|postrouting)[[:space:]]/) hook[chain]=1
+			if ($0 ~ /(^|[[:space:]])queue[[:space:]]+(num|flags)/) queue[chain]=1
+			for (i=1; i<NF; i++) if (($i == "jump" || $i == "goto") && $(i+1) ~ /^[A-Za-z0-9_]+$/) edge[chain SUBSEP $(i+1)]=1
+		}
+		END {
+			for (c in hook) { reachable[c]=1; hooked=1 }
+			for (pass=0; pass<=chain_count; pass++)
+				for (key in edge) { split(key, a, SUBSEP); if (reachable[a[1]] && chains[a[2]]) reachable[a[2]]=1 }
+			for (c in queue) { any_queue=1; if (reachable[c]) live_queue=1 }
+			printf "%d %d %d", hooked+0, any_queue+0, live_queue+0
+		}') || return 2
+	case "$assessment" in
+		'1 1 1') OWZ_HOOKED=true OWZ_QUEUE_RULE=true OWZ_FIREWALL=true OWZ_NFQUEUE=true OWZ_TABLE_STATE=processing;;
+		'1 1 0') OWZ_HOOKED=true OWZ_QUEUE_RULE=true OWZ_FIREWALL=true OWZ_TABLE_STATE=unreachable_queue;;
+		'1 0 0') OWZ_HOOKED=true OWZ_FIREWALL=true OWZ_TABLE_STATE=hook_only;;
+		'0 1 0') OWZ_QUEUE_RULE=true OWZ_TABLE_STATE=queue_without_hook;;
+		'0 0 0') OWZ_TABLE_STATE=inactive;;
+		*) return 2;;
+	esac
+	return 0
+}
+
+owz_probe_enabled() {
+	owz_init enabled
+	case $? in 0) OWZ_ENABLED=true;; 1|61) OWZ_ENABLED=false;; *) OWZ_ENABLED=null;; esac
+}
+
+owz_status() {
+	OWZ_DAEMON=false OWZ_FIREWALL=false OWZ_NFQUEUE=false OWZ_ENABLED=null
+	OWZ_HOOKED=false OWZ_QUEUE_RULE=false OWZ_TABLE_STATE=absent
+	OWZ_ERROR=null OWZ_PARTIAL=false OWZ_RUNNING=false OWZ_STATE=STOPPED
+	owz_probe_daemon
+	case $? in 0) OWZ_DAEMON=true;; 1) :;; *) OWZ_ERROR='"daemon_probe_failed"';; esac
+	owz_probe_firewall
+	case $? in 0|1) :;; *) [ "$OWZ_ERROR" != null ] || OWZ_ERROR='"firewall_probe_failed"';; esac
+	owz_probe_enabled
+	if [ "$OWZ_ERROR" != null ]; then
+		OWZ_STATE=ERROR
+	elif [ "$OWZ_DAEMON" = true ] && [ "$OWZ_TABLE_STATE" = processing ]; then
+		OWZ_STATE=RUNNING OWZ_RUNNING=true
+	elif [ "$OWZ_DAEMON" = true ] || [ "$OWZ_FIREWALL" = true ] || [ "$OWZ_QUEUE_RULE" = true ]; then
+		OWZ_STATE=PARTIAL OWZ_PARTIAL=true
+	fi
+	printf '{"running":%s,"daemon":%s,"firewall":%s,"nfqueue":%s,"hooked":%s,"queue_rule":%s,"table_state":"%s","enabled":%s,"partial":%s,"error":%s,"state":"%s"}\n' \
+		"$OWZ_RUNNING" "$OWZ_DAEMON" "$OWZ_FIREWALL" "$OWZ_NFQUEUE" "$OWZ_HOOKED" "$OWZ_QUEUE_RULE" "$OWZ_TABLE_STATE" "$OWZ_ENABLED" "$OWZ_PARTIAL" "$OWZ_ERROR" "$OWZ_STATE"
+}
+
+owz_wait_for() {
+	local expected="$1" count=0
+	while [ "$count" -lt 5 ]; do
+		owz_status >/dev/null
+		[ "$OWZ_STATE" = "$expected" ] && return 0
+		count=$((count + 1))
+		owz_sleep
+	done
+	return 1
+}
+
+owz_owner_active() {
+	local owner_dir="${1:-$OWZ_LOCK}" pid action stamp cmdline
+	[ -r "$owner_dir/owner" ] || return 1
+	read -r pid action stamp < "$owner_dir/owner" || return 1
+	case "$pid:$stamp" in *[!0-9:]*|:*|*:) return 1;; esac
+	case "$action" in start|stop|restart|apply_profile|set_manual|job_start|job_run|job_recover) :;; *) return 1;; esac
+	[ -r "/proc/$pid/cmdline" ] || return 1
+	cmdline=$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || return 1
+	case "$cmdline" in *openwrtzapret/service*" $action"*) return 0;; esac
+	return 1
+}
+
+owz_lock() {
+	local action="$1" stale
+	if ! mkdir "$OWZ_LOCK" 2>/dev/null; then
+		# The owner file is created immediately after mkdir; allow that short window.
+		[ -e "$OWZ_LOCK/owner" ] || owz_sleep
+		owz_owner_active && return 1
+		stale="$OWZ_LOCK.stale.$$"
+		[ -e "$stale" ] && return 1
+		mv "$OWZ_LOCK" "$stale" 2>/dev/null || return 1
+		# Recheck after rename: a new owner may have acquired the path between checks.
+		[ -e "$stale/owner" ] || owz_sleep
+		if owz_owner_active "$stale"; then
+			[ -e "$OWZ_LOCK" ] || mv "$stale" "$OWZ_LOCK" 2>/dev/null
+			return 1
+		fi
+		rm -f "$stale/owner" 2>/dev/null
+		rmdir "$stale" 2>/dev/null
+		mkdir "$OWZ_LOCK" 2>/dev/null || return 1
+	fi
+	if ! printf '%s %s %s\n' "$$" "$action" "$(date +%s)" > "$OWZ_LOCK/owner"; then
+		rm -f "$OWZ_LOCK/owner" 2>/dev/null
+		rmdir "$OWZ_LOCK" 2>/dev/null
+		return 1
+	fi
+	trap 'owz_unlock' EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	return 0
+}
+
+owz_unlock() {
+	local pid action stamp
+	[ -r "$OWZ_LOCK/owner" ] || return 0
+	read -r pid action stamp < "$OWZ_LOCK/owner" || return 0
+	[ "$pid" = "$$" ] || return 0
+	rm -f "$OWZ_LOCK/owner"
+	rmdir "$OWZ_LOCK" 2>/dev/null
+}
+
+owz_validate_ports() {
+	local list="$1" item first last rest n
+	[ -n "$list" ] || return 0
+	case "$list" in *[!0-9,-]*|,*|*,|*,,*) return 1;; esac
+	local oldifs="$IFS"
+	IFS=,
+	set -- $list
+	IFS="$oldifs"
+	for item in "$@"; do
+		case "$item" in
+			*-*)
+				first=${item%%-*}
+				rest=${item#*-}
+				case "$rest" in *-*) return 1;; esac
+				last=$rest
+				[ -n "$first" ] && [ -n "$last" ] || return 1
+				;;
+			*) first=$item; last=$item;;
+		esac
+		case "$first$last" in *[!0-9]*) return 1;; esac
+		n=$(printf '%s' "$first" | sed 's/^0*//'); [ -n "$n" ] || n=0; first=$n
+		n=$(printf '%s' "$last" | sed 's/^0*//'); [ -n "$n" ] || n=0; last=$n
+		[ "$first" -ge 1 ] && [ "$first" -le 65535 ] || return 1
+		[ "$last" -ge 1 ] && [ "$last" -le 65535 ] || return 1
+		[ "$first" -le "$last" ] || return 1
+	done
+	return 0
+}
+
+owz_validate_nfqws2() {
+	local value="$1" stripped
+	[ -n "$value" ] || return 1
+	# NFQWS2_OPT is data consumed by Zapret2, never a shell command. Keep a strict
+	# character allowlist and only permit the two upstream angle-bracket tokens.
+	[ "$(printf '%s' "$value" | LC_ALL=C tr -cd 'a-zA-Z0-9_.,:+=/@%<> -')" = "$value" ] || return 1
+	case "$value" in *\$*|*\`*|*\;*|*\|*|*\&*) return 1;; esac
+	stripped=$(printf '%s' "$value" | sed 's/<HOSTLIST_NOAUTO>//g; s/<HOSTLIST>//g')
+	case "$stripped" in *\<*|*\>*) return 1;; esac
+	return 0
+}
+
+owz_validate_requirement_list() {
+	local value="$1"
+	[ -n "$value" ] || return 0
+	printf '%s\n' "$value" | awk '
+		NF == 0 { next }
+		$0 !~ /^\/[A-Za-z0-9_@%+.:\/-]+$/ { bad=1; exit }
+		index($0, "..") != 0 { bad=1; exit }
+		END { exit bad }
+	'
+}
+
+owz_requirements_join() {
+	printf '%s\n' "$1" | awk 'NF { if (seen++) printf ","; printf "%s", $0 } END { print "" }'
+}
+
+owz_profile_hash() {
+	local blobs hostlists ipsets actual
+	blobs=$(owz_requirements_join "$OWZ_PROFILE_BLOBS") || return 1
+	hostlists=$(owz_requirements_join "$OWZ_PROFILE_HOSTLISTS") || return 1
+	ipsets=$(owz_requirements_join "$OWZ_PROFILE_IPSETS") || return 1
+	actual=$(printf 'id=%s\nname=%s\nsource=%s\nsource_version=%s\ncompatible=%s\ntcp_ports=%s\nudp_ports=%s\nnfqws2=%s\nrequirements.blobs=%s\nrequirements.hostlists=%s\nrequirements.ipsets=%s\n' \
+		"$OWZ_PROFILE_ID" "$OWZ_PROFILE_NAME" "$OWZ_PROFILE_SOURCE" "$OWZ_PROFILE_VERSION" "$OWZ_PROFILE_COMPATIBLE" \
+		"$OWZ_PROFILE_TCP" "$OWZ_PROFILE_UDP" "$OWZ_PROFILE_NFQ" "$blobs" "$hostlists" "$ipsets" | sha256sum 2>/dev/null) || return 1
+	actual=${actual%% *}
+	printf '%s' "$actual"
+}
+
+owz_profile_load() {
+	local id="$1" source file actual
+	case "$id" in
+		builtin-[a-z0-9]*) source=builtin; file="/usr/share/openwrtzapret/profiles/builtin/$id.json";;
+		flowseal-[a-z0-9]*) source=flowseal; file="/etc/openwrtzapret/profiles/flowseal/$id.json";;
+		user-[a-z0-9]*) source=user; file="/etc/openwrtzapret/profiles/user/$id.json";;
+		*) return 1;;
+	esac
+	case "$id" in *[!a-z0-9_-]*|*..*) return 1;; esac
+	[ -f "$file" ] && [ ! -L "$file" ] || return 1
+	[ "$(wc -c < "$file")" -le 65536 ] || return 1
+	command -v jsonfilter >/dev/null 2>&1 || return 1
+	OWZ_PROFILE_ID=$(jsonfilter -i "$file" -e '@.id' 2>/dev/null) || return 1
+	OWZ_PROFILE_NAME=$(jsonfilter -i "$file" -e '@.name' 2>/dev/null) || return 1
+	OWZ_PROFILE_SOURCE=$(jsonfilter -i "$file" -e '@.source' 2>/dev/null) || return 1
+	OWZ_PROFILE_VERSION=$(jsonfilter -i "$file" -e '@.source_version' 2>/dev/null) || return 1
+	OWZ_PROFILE_COMPATIBLE=$(jsonfilter -i "$file" -e '@.compatible' 2>/dev/null) || return 1
+	OWZ_PROFILE_TCP=$(jsonfilter -i "$file" -e '@.tcp_ports' 2>/dev/null) || return 1
+	OWZ_PROFILE_UDP=$(jsonfilter -i "$file" -e '@.udp_ports' 2>/dev/null) || return 1
+	OWZ_PROFILE_NFQ=$(jsonfilter -i "$file" -e '@.nfqws2' 2>/dev/null) || return 1
+	jsonfilter -i "$file" -e '@.requirements.blobs' >/dev/null 2>&1 || return 1
+	jsonfilter -i "$file" -e '@.requirements.hostlists' >/dev/null 2>&1 || return 1
+	jsonfilter -i "$file" -e '@.requirements.ipsets' >/dev/null 2>&1 || return 1
+	OWZ_PROFILE_BLOBS=$(jsonfilter -i "$file" -e '@.requirements.blobs[*]' 2>/dev/null || :)
+	OWZ_PROFILE_HOSTLISTS=$(jsonfilter -i "$file" -e '@.requirements.hostlists[*]' 2>/dev/null || :)
+	OWZ_PROFILE_IPSETS=$(jsonfilter -i "$file" -e '@.requirements.ipsets[*]' 2>/dev/null || :)
+	OWZ_PROFILE_HASH=$(jsonfilter -i "$file" -e '@.content_hash' 2>/dev/null) || return 1
+	[ "$OWZ_PROFILE_ID" = "$id" ] && [ "$OWZ_PROFILE_SOURCE" = "$source" ] || return 1
+	case "$OWZ_PROFILE_COMPATIBLE" in true|false) :;; *) return 1;; esac
+	[ -n "$OWZ_PROFILE_NAME" ] && [ -n "$OWZ_PROFILE_VERSION" ] || return 1
+	[ "$(printf '%s' "$OWZ_PROFILE_NAME" | LC_ALL=C tr -cd 'a-zA-Z0-9 _().+-')" = "$OWZ_PROFILE_NAME" ] || return 1
+	[ "$(printf '%s' "$OWZ_PROFILE_VERSION" | LC_ALL=C tr -cd 'a-zA-Z0-9._-')" = "$OWZ_PROFILE_VERSION" ] || return 1
+	owz_validate_ports "$OWZ_PROFILE_TCP" || return 1
+	owz_validate_ports "$OWZ_PROFILE_UDP" || return 1
+	if [ "$OWZ_PROFILE_COMPATIBLE" = true ]; then owz_validate_nfqws2 "$OWZ_PROFILE_NFQ" || return 1
+	elif [ -n "$OWZ_PROFILE_NFQ" ]; then owz_validate_nfqws2 "$OWZ_PROFILE_NFQ" || return 1; fi
+	owz_validate_requirement_list "$OWZ_PROFILE_BLOBS" || return 1
+	owz_validate_requirement_list "$OWZ_PROFILE_HOSTLISTS" || return 1
+	owz_validate_requirement_list "$OWZ_PROFILE_IPSETS" || return 1
+	actual=$(owz_profile_hash) || return 1
+	[ "$OWZ_PROFILE_HASH" = "sha256:$actual" ] || return 1
+}
+
+owz_profile_requirements_ready() {
+	local list
+	for list in "$OWZ_PROFILE_BLOBS" "$OWZ_PROFILE_HOSTLISTS" "$OWZ_PROFILE_IPSETS"; do
+		[ -n "$list" ] || continue
+		printf '%s\n' "$list" | while IFS= read -r item; do
+			[ -n "$item" ] || continue
+			[ -f "$item" ] && [ ! -L "$item" ] || exit 1
+		done || return 1
+	done
+	return 0
+}
+
+owz_profile_active() {
+	local id
+	id=$(uci -q get zapret2.config.active_profile 2>/dev/null) || id=''
+	case "$id" in
+		'') printf '%s\n' '{"ok":true,"profile":null}';;
+		builtin-*|flowseal-*|user-*) case "$id" in *[!a-z0-9_-]*) printf '%s\n' '{"ok":false,"error":"invalid_active_profile"}';; *) printf '{"ok":true,"profile":"%s"}\n' "$id";; esac;;
+		*) printf '%s\n' '{"ok":false,"error":"invalid_active_profile"}';;
+	esac
+}
+
+owz_profile_overlay() {
+	local id="$1" tmp=/opt/zapret2/config.owz.$$
+	owz_profile_load "$id" || return 1
+	[ "$OWZ_PROFILE_COMPATIBLE" = true ] || return 1
+	owz_profile_requirements_ready || return 1
+	[ -r /opt/zapret2/config ] || return 1
+	umask 077
+	awk -v tcp="$OWZ_PROFILE_TCP" -v udp="$OWZ_PROFILE_UDP" -v nfq="$OWZ_PROFILE_NFQ" '
+		/^NFQWS2_PORTS_TCP=/ { print "NFQWS2_PORTS_TCP=\"" tcp "\""; seen_tcp=1; next }
+		/^NFQWS2_PORTS_UDP=/ { print "NFQWS2_PORTS_UDP=\"" udp "\""; seen_udp=1; next }
+		/^NFQWS2_OPT=/ { print "NFQWS2_OPT=\"" nfq "\""; seen_nfq=1; next }
+		{ print }
+		END {
+			if (!seen_tcp) print "NFQWS2_PORTS_TCP=\"" tcp "\""
+			if (!seen_udp) print "NFQWS2_PORTS_UDP=\"" udp "\""
+			if (!seen_nfq) print "NFQWS2_OPT=\"" nfq "\""
+		}
+	' /opt/zapret2/config > "$tmp" || { rm -f "$tmp"; return 1; }
+	chmod 600 "$tmp" && mv -f "$tmp" /opt/zapret2/config || { rm -f "$tmp"; return 1; }
+}
+
+owz_profile_overlay_active() {
+	local id
+	id=$(uci -q get zapret2.config.active_profile 2>/dev/null) || id=''
+	[ -n "$id" ] || return 0
+	owz_profile_overlay "$id"
+}
+
+owz_profile_restore_pointer() {
+	local old="$1"
+	if [ -n "$old" ]; then uci -q set "zapret2.config.active_profile=$old" || return 1
+	else uci -q delete zapret2.config.active_profile 2>/dev/null || :; fi
+	uci -q commit zapret2
+}
+
+owz_profile_result() {
+	local ok="$1" id="$2" stage="$3" rolled="$4" error="$5"
+	[ -n "$error" ] || error=null
+	[ "$error" = null ] || error="\"$error\""
+	owz_status >/dev/null
+	printf '{"ok":%s,"profile":"%s","stage":"%s","rolled_back":%s,"error":%s,"state":"%s"}\n' "$ok" "$id" "$stage" "$rolled" "$error" "$OWZ_STATE"
+}
+
+owz_restore_snapshot() {
+	local backup="$1" old_profile="$2" old_state="$3" failed=false
+	owz_status >/dev/null
+	if [ "$OWZ_DAEMON" = true ] || [ "$OWZ_FIREWALL" = true ] || [ "$OWZ_QUEUE_RULE" = true ]; then
+		owz_init stop_fw || failed=true
+		owz_init stop_daemons || failed=true
+	fi
+	cp -p "$backup/config" /opt/zapret2/config || failed=true
+	owz_profile_restore_pointer "$old_profile" || failed=true
+	if [ "$old_state" = RUNNING ]; then
+		owz_init start_daemons || failed=true
+		owz_init start_fw || failed=true
+		owz_wait_for RUNNING || failed=true
+	else
+		owz_wait_for STOPPED || failed=true
+	fi
+	[ "$failed" = false ]
+}
+
+owz_apply_profile() {
+	local id="$1" stage=validation failure='' old_profile old_state backup rolled=false
+	case "$id" in *[!a-z0-9_-]*|'') exit 64;; esac
+	if ! owz_lock apply_profile; then
+		printf '{"ok":false,"profile":"%s","stage":"lock","rolled_back":false,"error":"busy","state":"UNKNOWN"}\n' "$id"
+		return 0
+	fi
+	owz_profile_load "$id" || failure=invalid_profile
+	[ -n "$failure" ] || [ "$OWZ_PROFILE_COMPATIBLE" = true ] || failure=incompatible_profile
+	[ -n "$failure" ] || owz_profile_requirements_ready || failure=missing_requirements
+	[ -n "$failure" ] || [ -z "$(uci -q changes zapret2 2>/dev/null)" ] || failure=unsaved_uci_changes
+	owz_status >/dev/null
+	old_state=$OWZ_STATE
+	[ -n "$failure" ] || case "$old_state" in RUNNING|STOPPED) :;; *) failure=unsafe_initial_state;; esac
+	old_profile=$(uci -q get zapret2.config.active_profile 2>/dev/null) || old_profile=''
+	if [ -n "$failure" ]; then owz_profile_result false "$id" "$stage" false "$failure"; return 0; fi
+	backup=$(mktemp -d /tmp/openwrtzapret-apply.XXXXXX) || { owz_profile_result false "$id" snapshot false snapshot_failed; return 0; }
+	chmod 700 "$backup"
+	if ! cp -p /opt/zapret2/config "$backup/config"; then
+		rmdir "$backup" 2>/dev/null
+		owz_profile_result false "$id" snapshot false snapshot_failed
+		return 0
+	fi
+	if [ "$old_state" = RUNNING ]; then
+		stage=stop_firewall; owz_init stop_fw || failure=stop_firewall_failed
+		[ -n "$failure" ] || { stage=stop_daemons; owz_init stop_daemons || failure=stop_daemons_failed; }
+		[ -n "$failure" ] || { stage=verify_stopped; owz_wait_for STOPPED || failure=stop_postcondition_failed; }
+	fi
+	[ -n "$failure" ] || { stage=sync; owz_sync skip_active || failure=sync_failed; }
+	[ -n "$failure" ] || { stage=write_config; owz_profile_overlay "$id" || failure=profile_config_failed; }
+	[ -n "$failure" ] || { stage=start_daemons; owz_init start_daemons || failure=start_daemons_failed; }
+	[ -n "$failure" ] || { stage=start_firewall; owz_init start_fw || failure=start_firewall_failed; }
+	[ -n "$failure" ] || { stage=verify_running; owz_wait_for RUNNING || failure=postcondition_failed; }
+	if [ -z "$failure" ] && [ "$old_state" = STOPPED ]; then
+		stage=restore_stop_firewall; owz_init stop_fw || failure=restore_stop_firewall_failed
+		[ -n "$failure" ] || { stage=restore_stop_daemons; owz_init stop_daemons || failure=restore_stop_daemons_failed; }
+		[ -n "$failure" ] || { stage=restore_stopped; owz_wait_for STOPPED || failure=restore_stopped_failed; }
+	fi
+	if [ -z "$failure" ]; then
+		stage=commit_profile
+		uci -q set "zapret2.config.active_profile=$id" && uci -q commit zapret2 || failure=profile_commit_failed
+	fi
+	if [ -z "$failure" ]; then
+		stage=verify_committed
+		owz_status >/dev/null
+		[ "$OWZ_STATE" = "$old_state" ] || failure=postcommit_state_failed
+	fi
+	if [ -n "$failure" ]; then
+		owz_restore_snapshot "$backup" "$old_profile" "$old_state" && rolled=true
+	fi
+	rm -f "$backup/config"; rmdir "$backup" 2>/dev/null
+	if [ -n "$failure" ]; then owz_profile_result false "$id" "$stage" "$rolled" "$failure"
+	else owz_profile_result true "$id" complete false ''; fi
+}
+
+owz_set_manual() {
+	local stage=validation failure='' old_profile old_state backup rolled=false
+	if ! owz_lock set_manual; then
+		printf '%s\n' '{"ok":false,"profile":"manual","stage":"lock","rolled_back":false,"error":"busy","state":"UNKNOWN"}'
+		return 0
+	fi
+	[ -z "$(uci -q changes zapret2 2>/dev/null)" ] || failure=unsaved_uci_changes
+	owz_status >/dev/null
+	old_state=$OWZ_STATE
+	[ -n "$failure" ] || case "$old_state" in RUNNING|STOPPED) :;; *) failure=unsafe_initial_state;; esac
+	old_profile=$(uci -q get zapret2.config.active_profile 2>/dev/null) || old_profile=''
+	if [ -n "$failure" ]; then owz_profile_result false manual "$stage" false "$failure"; return 0; fi
+	if [ -z "$old_profile" ]; then owz_profile_result true manual complete false ''; return 0; fi
+	backup=$(mktemp -d /tmp/openwrtzapret-manual.XXXXXX) || { owz_profile_result false manual snapshot false snapshot_failed; return 0; }
+	chmod 700 "$backup"
+	if ! cp -p /opt/zapret2/config "$backup/config"; then
+		rmdir "$backup" 2>/dev/null
+		owz_profile_result false manual snapshot false snapshot_failed
+		return 0
+	fi
+	if [ "$old_state" = RUNNING ]; then
+		stage=stop_firewall; owz_init stop_fw || failure=stop_firewall_failed
+		[ -n "$failure" ] || { stage=stop_daemons; owz_init stop_daemons || failure=stop_daemons_failed; }
+		[ -n "$failure" ] || { stage=verify_stopped; owz_wait_for STOPPED || failure=stop_postcondition_failed; }
+	fi
+	[ -n "$failure" ] || { stage=sync_manual; owz_sync skip_active || failure=sync_failed; }
+	if [ -z "$failure" ]; then
+		stage=commit_manual
+		uci -q delete zapret2.config.active_profile 2>/dev/null || :
+		uci -q commit zapret2 || failure=profile_commit_failed
+	fi
+	if [ -z "$failure" ] && [ "$old_state" = RUNNING ]; then
+		stage=start_daemons; owz_init start_daemons || failure=start_daemons_failed
+		[ -n "$failure" ] || { stage=start_firewall; owz_init start_fw || failure=start_firewall_failed; }
+		[ -n "$failure" ] || { stage=verify_running; owz_wait_for RUNNING || failure=postcondition_failed; }
+	fi
+	if [ -z "$failure" ] && [ "$old_state" = STOPPED ]; then stage=verify_stopped; owz_wait_for STOPPED || failure=postcondition_failed; fi
+	if [ -n "$failure" ]; then owz_restore_snapshot "$backup" "$old_profile" "$old_state" && rolled=true; fi
+	rm -f "$backup/config"; rmdir "$backup" 2>/dev/null
+	if [ -n "$failure" ]; then owz_profile_result false manual "$stage" "$rolled" "$failure"
+	else owz_profile_result true manual complete false ''; fi
+}
+
+
+owz_valid_job_id() {
+	local id="$1" a b
+	case "$id" in ''|*[!0-9-]*) return 1;; esac
+	a=${id%-*}; b=${id##*-}
+	[ "$a" != "$id" ] && [ -n "$a" ] && [ -n "$b" ] || return 1
+	case "$a$b" in *[!0-9]*) return 1;; esac
+	return 0
+}
+
+owz_json_file() {
+	local file="$1"
+	[ -f "$file" ] && [ ! -L "$file" ] && [ "$(wc -c < "$file" 2>/dev/null)" -le 262144 ] || return 1
+	cat "$file"
+}
+
+owz_job_active_id() {
+	local id
+	[ -r "$OWZ_JOURNAL/active" ] || return 1
+	id=$(cat "$OWZ_JOURNAL/active" 2>/dev/null) || return 1
+	owz_valid_job_id "$id" || return 1
+	printf '%s' "$id"
+}
+
+owz_job_state_write() {
+	local dir="$1" job="$2" mode="$3" status="$4" stage="$5" current="$6" index="$7" total="$8" error="$9" tmp
+	tmp="$dir/state.json.tmp.$$"
+	[ -n "$current" ] || current=null
+	[ "$current" = null ] || current="\"$current\""
+	[ -n "$error" ] || error=null
+	[ "$error" = null ] || error="\"$error\""
+	printf '{"ok":true,"job_id":"%s","mode":"%s","status":"%s","stage":"%s","current_profile":%s,"index":%s,"total":%s,"error":%s}\n' \
+		"$job" "$mode" "$status" "$stage" "$current" "$index" "$total" "$error" > "$tmp" && mv -f "$tmp" "$dir/state.json"
+}
+
+owz_job_meta_get() {
+	local file="$1" key="$2"
+	sed -n "s/^${key}=//p" "$file" 2>/dev/null | tail -n 1
+}
+
+owz_job_meta_set_pid() {
+	local file="$1" pid="$2" tmp="$file.tmp.$$"
+	awk -v pid="$pid" 'BEGIN{done=0} /^worker_pid=/{if(!done){print "worker_pid=" pid; done=1} next} {print} END{if(!done) print "worker_pid=" pid}' "$file" > "$tmp" && mv -f "$tmp" "$file"
+}
+
+owz_list_compatible_profiles() {
+	local dir file id
+	for dir in /usr/share/openwrtzapret/profiles/builtin /etc/openwrtzapret/profiles/flowseal /etc/openwrtzapret/profiles/user; do
+		for file in "$dir"/*.json; do
+			[ -f "$file" ] || continue
+			id=${file##*/}; id=${id%.json}
+			owz_profile_load "$id" || continue
+			[ "$OWZ_PROFILE_COMPATIBLE" = true ] || continue
+			owz_profile_requirements_ready || continue
+			printf '%s\n' "$id"
+		done
+	done
+}
+
+owz_job_snapshot_restore() {
+	local dir="$1" meta old_profile old_state failed=false
+	meta="$dir/snapshot/meta"
+	[ -r "$meta" ] && [ -r "$dir/snapshot/config" ] || return 1
+	old_profile=$(owz_job_meta_get "$meta" old_profile)
+	old_state=$(owz_job_meta_get "$meta" old_state)
+	case "$old_profile" in ''|builtin-[a-z0-9]*|flowseal-[a-z0-9]*|user-[a-z0-9]*) :;; *) return 1;; esac
+	case "$old_state" in RUNNING|STOPPED) :;; *) return 1;; esac
+	owz_status >/dev/null
+	if [ "$OWZ_DAEMON" = true ] || [ "$OWZ_FIREWALL" = true ] || [ "$OWZ_QUEUE_RULE" = true ]; then
+		owz_init stop_fw || failed=true
+		owz_init stop_daemons || failed=true
+		owz_wait_for STOPPED || failed=true
+	fi
+	cp -p "$dir/snapshot/config" /opt/zapret2/config || failed=true
+	owz_profile_restore_pointer "$old_profile" || failed=true
+	if [ "$old_state" = RUNNING ]; then
+		owz_init start_daemons || failed=true
+		owz_init start_fw || failed=true
+		owz_wait_for RUNNING || failed=true
+	else
+		owz_wait_for STOPPED || failed=true
+	fi
+	[ "$failed" = false ]
+}
+
+owz_probe_http() {
+	local url="$1" out code sec ms rc status
+	if ! command -v curl >/dev/null 2>&1; then
+		printf '%s' '{"status":"FAIL","latency_ms":null,"http_code":0,"detail":"curl_missing"}'
+		return 1
+	fi
+	out=$(curl -L -sS -o /dev/null -w '%{http_code} %{time_total}' --connect-timeout 4 --max-time 8 "$url" 2>/dev/null); rc=$?
+	if [ "$rc" -ne 0 ]; then
+		printf '%s' '{"status":"FAIL","latency_ms":null,"http_code":0,"detail":"transport_failed"}'
+		return 1
+	fi
+	code=${out%% *}; sec=${out#* }
+	case "$code" in *[!0-9]*|'') code=0;; esac
+	code=$(printf '%s' "$code" | sed 's/^0*//'); [ -n "$code" ] || code=0
+	ms=$(awk -v s="$sec" 'BEGIN { if (s+0 < 0) print 0; else printf "%d", (s+0)*1000 }' 2>/dev/null); [ -n "$ms" ] || ms=null
+	case "$code" in 2??|3??|4??) status=PASS;; *) status=FAIL;; esac
+	printf '{"status":"%s","latency_ms":%s,"http_code":%s,"detail":"http_reachability"}' "$status" "$ms" "$code"
+	[ "$status" = PASS ]
+}
+
+owz_probe_voice_udp() {
+	local out code sec ms rc
+	if ! command -v curl >/dev/null 2>&1; then
+		printf '%s' '{"status":"PARTIAL","transport":"UNKNOWN","latency_ms":null,"detail":"curl_missing","scope":"transport_only"}'
+		return 0
+	fi
+	if ! curl --help all 2>/dev/null | grep -q -- '--http3-only'; then
+		printf '%s' '{"status":"PARTIAL","transport":"UNKNOWN","latency_ms":null,"detail":"http3_probe_unavailable","scope":"transport_only"}'
+		return 0
+	fi
+	# This verifies that UDP/QUIC traffic to Discord can pass. It is intentionally
+	# not presented as a successful authenticated Discord voice call or as a probe
+	# of Discord's dynamically allocated voice media port.
+	out=$(curl --http3-only -sS -o /dev/null -w '%{http_code} %{time_total}' --connect-timeout 4 --max-time 8 'https://discord.com/api/v10/gateway' 2>/dev/null); rc=$?
+	if [ "$rc" -ne 0 ]; then
+		printf '%s' '{"status":"FAIL","transport":"FAIL","latency_ms":null,"detail":"discord_udp_quic_failed","scope":"transport_only"}'
+		return 1
+	fi
+	code=${out%% *}; sec=${out#* }
+	case "$code" in *[!0-9]*|'') code=0;; esac
+	ms=$(awk -v s="$sec" 'BEGIN { if (s+0 < 0) print 0; else printf "%d", (s+0)*1000 }' 2>/dev/null); [ -n "$ms" ] || ms=null
+	printf '{"status":"PASS","transport":"PASS","latency_ms":%s,"detail":"discord_udp_quic_transport_only_not_voice_call","scope":"transport_only"}' "$ms"
+	return 0
+}
+
+owz_profile_test_network() {
+	local youtube googlevideo discord media voice ys gs ds ms vs overall
+	youtube=$(owz_probe_http 'https://www.youtube.com/generate_204'); ys=$?
+	googlevideo=$(owz_probe_http 'https://redirector.googlevideo.com/report_mapping?di=no'); gs=$?
+	discord=$(owz_probe_http 'https://discord.com/api/v10/gateway'); ds=$?
+	media=$(owz_probe_http 'https://cdn.discordapp.com/'); ms=$?
+	voice=$(owz_probe_voice_udp); vs=$?
+	if [ "$ys" -ne 0 ] || [ "$gs" -ne 0 ] || [ "$ds" -ne 0 ] || [ "$ms" -ne 0 ]; then overall=FAIL
+	elif [ "$vs" -ne 0 ]; then overall=FAIL
+	elif printf '%s' "$voice" | grep -q '"status":"PASS"'; then overall=PASS
+	else overall=PARTIAL; fi
+	OWZ_TEST_OVERALL=$overall
+	OWZ_TESTS_JSON=$(printf '{"youtube":%s,"googlevideo":%s,"discord":%s,"discord_media":%s,"discord_voice_udp":%s}' "$youtube" "$googlevideo" "$discord" "$media" "$voice")
+}
+
+owz_profile_result_write() {
+	local dir="$1" id="$2" name="$3" hash="$4" version="$5" status="$6" tests="$7" restored="$8" reason="$9" now tmp cache
+	now=$(date +%s)
+	mkdir -p "$OWZ_RESULT_ROOT" "$dir/results" || return 1
+	chmod 700 "$OWZ_RESULT_ROOT" "$dir/results" 2>/dev/null || :
+	[ -n "$reason" ] || reason=null
+	[ "$reason" = null ] || reason="\"$reason\""
+	tmp="$dir/results/$id.json.tmp.$$"
+	printf '{"profile_id":"%s","profile_name":"%s","content_hash":"%s","source_version":"%s","tested_at":%s,"status":"%s","restored":%s,"reason":%s,"tests":%s}\n' \
+		"$id" "$name" "$hash" "$version" "$now" "$status" "$restored" "$reason" "$tests" > "$tmp" || return 1
+	mv -f "$tmp" "$dir/results/$id.json" || return 1
+	cache="$OWZ_RESULT_ROOT/$id.json.tmp.$$"
+	cp "$dir/results/$id.json" "$cache" && chmod 600 "$cache" && mv -f "$cache" "$OWZ_RESULT_ROOT/$id.json"
+}
+
+owz_job_build_result() {
+	local dir="$1" job="$2" mode="$3" final="$4" error="$5" tmp first=true id file
+	tmp="$dir/result.json.tmp.$$"
+	[ -n "$error" ] || error=null
+	[ "$error" = null ] || error="\"$error\""
+	printf '{"ok":true,"job_id":"%s","mode":"%s","status":"%s","error":%s,"results":[' "$job" "$mode" "$final" "$error" > "$tmp" || return 1
+	if [ -r "$dir/completed" ]; then
+		while IFS= read -r id; do
+			case "$id" in builtin-*|flowseal-*|user-*) case "$id" in *[!a-z0-9_-]*) continue;; esac;; *) continue;; esac
+			file="$dir/results/$id.json"
+			[ -r "$file" ] || continue
+			if [ "$first" = true ]; then first=false; else printf ',' >> "$tmp"; fi
+			cat "$file" >> "$tmp"
+		done < "$dir/completed"
+	fi
+	printf ']}\n' >> "$tmp"
+	mv -f "$tmp" "$dir/result.json"
+}
+
+owz_job_test_one() {
+	local dir="$1" id="$2" stage=validation failure='' restored=false name="$2" hash=invalid version=unknown tests status reason
+	if owz_profile_load "$id"; then
+		name=$OWZ_PROFILE_NAME; hash=$OWZ_PROFILE_HASH; version=$OWZ_PROFILE_VERSION
+	else
+		failure=invalid_profile
+	fi
+	[ -n "$failure" ] || [ "$OWZ_PROFILE_COMPATIBLE" = true ] || failure=incompatible_profile
+	[ -n "$failure" ] || owz_profile_requirements_ready || failure=missing_requirements
+	if [ -z "$failure" ]; then
+		owz_status >/dev/null
+		if [ "$OWZ_STATE" = RUNNING ]; then
+			stage=stop_firewall; owz_init stop_fw || failure=stop_firewall_failed
+			[ -n "$failure" ] || { stage=stop_daemons; owz_init stop_daemons || failure=stop_daemons_failed; }
+			[ -n "$failure" ] || { stage=verify_stopped; owz_wait_for STOPPED || failure=stop_postcondition_failed; }
+		elif [ "$OWZ_STATE" != STOPPED ]; then failure=unsafe_runtime_state; fi
+	fi
+	[ -n "$failure" ] || { stage=sync; owz_sync skip_active || failure=sync_failed; }
+	[ -n "$failure" ] || { stage=write_config; owz_profile_overlay "$id" || failure=profile_config_failed; }
+	[ -n "$failure" ] || { stage=start_daemons; owz_init start_daemons || failure=start_daemons_failed; }
+	[ -n "$failure" ] || { stage=start_firewall; owz_init start_fw || failure=start_firewall_failed; }
+	[ -n "$failure" ] || { stage=verify_running; owz_wait_for RUNNING || failure=postcondition_failed; }
+	if [ -z "$failure" ]; then
+		stage=network_probes
+		owz_profile_test_network
+		status=$OWZ_TEST_OVERALL
+		tests=$OWZ_TESTS_JSON
+		reason=''
+	else
+		status=FAIL
+		reason=$failure
+		tests='{"youtube":{"status":"SKIP"},"googlevideo":{"status":"SKIP"},"discord":{"status":"SKIP"},"discord_media":{"status":"SKIP"},"discord_voice_udp":{"status":"SKIP"}}'
+	fi
+	if owz_job_snapshot_restore "$dir"; then restored=true; else restored=false; fi
+	if [ "$restored" != true ]; then
+		owz_profile_result_write "$dir" "$id" "$name" "$hash" "$version" ERROR "$tests" false recovery_failed || :
+		return 2
+	fi
+	owz_profile_result_write "$dir" "$id" "$name" "$hash" "$version" "$status" "$tests" true "$reason" || return 1
+	printf '%s\n' "$id" >> "$dir/completed"
+	return 0
+}
+
+owz_job_prepare() {
+	local mode="$1" profile="$2" now job dir old_profile old_state total deadline profiles
+	if ! owz_lock job_start; then
+		printf '%s
+' '{"ok":false,"error":"busy"}'
+		return 0
+	fi
+	mkdir -p "$OWZ_JOB_ROOT" "$OWZ_RESULT_ROOT" "$OWZ_JOURNAL" || { printf '%s
+' '{"ok":false,"error":"state_dir_failed"}'; return 0; }
+	chmod 700 "$OWZ_JOB_ROOT" "$OWZ_RESULT_ROOT" "$OWZ_JOURNAL" 2>/dev/null || :
+	if [ -e "$OWZ_JOURNAL/active" ]; then
+		if job=$(owz_job_active_id); then
+			printf '{"ok":false,"error":"job_busy","job_id":"%s"}
+' "$job"
+		else
+			printf '%s
+' '{"ok":false,"error":"invalid_recovery_journal"}'
+		fi
+		return 0
+	fi
+
+	case "$mode" in
+		flowseal_update)
+			[ -x "$OWZ_FLOWSEAL_UPDATE" ] || { printf '%s
+' '{"ok":false,"error":"flowseal_updater_missing"}'; return 0; }
+			profiles=''; total=1
+			;;
+		profile|all)
+			[ -z "$(uci -q changes zapret2 2>/dev/null)" ] || { printf '%s
+' '{"ok":false,"error":"unsaved_uci_changes"}'; return 0; }
+			owz_status >/dev/null
+			old_state=$OWZ_STATE
+			case "$old_state" in RUNNING|STOPPED) :;; *) printf '{"ok":false,"error":"unsafe_initial_state","state":"%s"}
+' "$old_state"; return 0;; esac
+			if [ "$mode" = profile ]; then
+				owz_profile_load "$profile" && [ "$OWZ_PROFILE_COMPATIBLE" = true ] && owz_profile_requirements_ready || { printf '%s
+' '{"ok":false,"error":"invalid_or_incompatible_profile"}'; return 0; }
+				profiles=$profile
+			else
+				profiles=$(owz_list_compatible_profiles)
+				[ -n "$profiles" ] || { printf '%s
+' '{"ok":false,"error":"no_compatible_profiles"}'; return 0; }
+			fi
+			total=$(printf '%s
+' "$profiles" | awk 'NF{n++} END{print n+0}')
+			;;
+		*) printf '%s
+' '{"ok":false,"error":"invalid_job_mode"}'; return 0;;
+	esac
+
+	# Every async job is supervised so an interrupted worker cannot leave a sticky active journal.
+	[ -x /etc/init.d/openwrtzapret-recovery ] || { printf '%s
+' '{"ok":false,"error":"recovery_supervisor_missing"}'; return 0; }
+	/etc/init.d/openwrtzapret-recovery enable >/dev/null 2>&1 || { printf '%s
+' '{"ok":false,"error":"recovery_supervisor_enable_failed"}'; return 0; }
+	/etc/init.d/openwrtzapret-recovery start >/dev/null 2>&1 || { printf '%s
+' '{"ok":false,"error":"recovery_supervisor_start_failed"}'; return 0; }
+	now=$(date +%s); job="$now-$$"; dir="$OWZ_JOB_ROOT/$job"
+	[ ! -e "$dir" ] || { printf '%s
+' '{"ok":false,"error":"job_id_collision"}'; return 0; }
+	mkdir -p "$dir/results" || { printf '%s
+' '{"ok":false,"error":"job_create_failed"}'; return 0; }
+	chmod 700 "$dir" "$dir/results"
+
+	if [ "$mode" != flowseal_update ]; then
+		mkdir -p "$dir/snapshot" || { rm -rf "$dir"; printf '%s
+' '{"ok":false,"error":"job_create_failed"}'; return 0; }
+		chmod 700 "$dir/snapshot"
+		cp -p /opt/zapret2/config "$dir/snapshot/config" || { rm -rf "$dir"; printf '%s
+' '{"ok":false,"error":"snapshot_failed"}'; return 0; }
+		old_profile=$(uci -q get zapret2.config.active_profile 2>/dev/null) || old_profile=''
+		case "$old_profile" in ''|builtin-[a-z0-9]*|flowseal-[a-z0-9]*|user-[a-z0-9]*) case "$old_profile" in *[!a-z0-9_-]*) rm -rf "$dir"; printf '%s
+' '{"ok":false,"error":"invalid_active_profile"}'; return 0;; esac;; *) rm -rf "$dir"; printf '%s
+' '{"ok":false,"error":"invalid_active_profile"}'; return 0;; esac
+		printf 'old_profile=%s
+old_state=%s
+' "$old_profile" "$old_state" > "$dir/snapshot/meta"
+		printf '%s
+' "$profiles" > "$dir/profiles"
+		: > "$dir/completed"
+	else
+		: > "$dir/profiles"
+	fi
+
+	printf '%s
+' "$mode" > "$dir/mode"
+	if [ "$mode" = flowseal_update ]; then deadline=$((now + 600)); else deadline=$((now + 120 + total * 60)); [ "$deadline" -le $((now + 3600)) ] || deadline=$((now + 3600)); fi
+	printf 'created=%s
+deadline=%s
+worker_pid=0
+' "$now" "$deadline" > "$dir/meta"
+	owz_job_state_write "$dir" "$job" "$mode" PENDING queued '' 0 "$total" '' || { rm -rf "$dir"; printf '%s
+' '{"ok":false,"error":"job_state_failed"}'; return 0; }
+	printf '%s
+' "$job" > "$OWZ_JOURNAL/active" || { rm -rf "$dir"; printf '%s
+' '{"ok":false,"error":"journal_failed"}'; return 0; }
+	owz_unlock
+	"$0" job_run "$job" >/dev/null 2>&1 &
+	owz_job_meta_set_pid "$dir/meta" "$!" || :
+	printf '{"ok":true,"job_id":"%s","mode":"%s","status":"PENDING","total":%s}
+' "$job" "$mode" "$total"
+}
+
+owz_job_run() {
+	local job="$1" dir mode total index=0 id rc final=DONE final_error=''
+	owz_valid_job_id "$job" || exit 64
+	dir="$OWZ_JOB_ROOT/$job"; [ -d "$dir" ] && [ ! -L "$dir" ] || exit 66
+	if ! owz_lock job_run; then exit 75; fi
+	[ "$(owz_job_active_id 2>/dev/null)" = "$job" ] || exit 0
+	mode=$(cat "$dir/mode" 2>/dev/null); case "$mode" in profile|all|flowseal_update) :;; *) exit 65;; esac
+	owz_job_meta_set_pid "$dir/meta" "$$" || :
+
+	if [ "$mode" = flowseal_update ]; then
+		owz_job_state_write "$dir" "$job" "$mode" RUNNING updating '' 0 1 ''
+		"$OWZ_FLOWSEAL_UPDATE" run "$dir"; rc=$?
+		case "$rc" in
+			0) final=DONE; final_error=''; index=1;;
+			130) final=CANCELLED; final_error=cancelled; index=0;;
+			*) final=ERROR; final_error=flowseal_update_failed; index=0;;
+		esac
+		[ -r "$dir/result.json" ] || printf '{"ok":false,"mode":"flowseal_update","status":"%s","error":"%s"}
+' "$final" "$final_error" > "$dir/result.json"
+		owz_job_state_write "$dir" "$job" "$mode" "$final" complete '' "$index" 1 "$final_error"
+		[ "$(owz_job_active_id 2>/dev/null)" = "$job" ] && rm -f "$OWZ_JOURNAL/active"
+		return 0
+	fi
+
+	total=$(awk 'NF{n++} END{print n+0}' "$dir/profiles")
+	owz_job_state_write "$dir" "$job" "$mode" RUNNING prepare '' 0 "$total" ''
+	while IFS= read -r id; do
+		[ -n "$id" ] || continue
+		if [ -e "$dir/cancel" ]; then final=CANCELLED; final_error=cancelled; break; fi
+		index=$((index + 1))
+		owz_job_state_write "$dir" "$job" "$mode" RUNNING testing "$id" "$index" "$total" ''
+		owz_job_test_one "$dir" "$id"; rc=$?
+		if [ "$rc" -eq 2 ]; then final=ERROR; final_error=recovery_failed; break
+		elif [ "$rc" -ne 0 ]; then final=ERROR; final_error=result_write_failed; break; fi
+		if [ -e "$dir/cancel" ]; then final=CANCELLED; final_error=cancelled; break; fi
+	done < "$dir/profiles"
+	if [ "$final" != ERROR ]; then
+		if ! owz_job_snapshot_restore "$dir"; then final=ERROR; final_error=recovery_failed; fi
+	fi
+	if [ "$final" = ERROR ] && [ "$final_error" = recovery_failed ]; then
+		owz_job_state_write "$dir" "$job" "$mode" ERROR recovery_failed '' "$index" "$total" "$final_error"
+		owz_job_build_result "$dir" "$job" "$mode" ERROR "$final_error" || :
+		return 0
+	fi
+	owz_job_state_write "$dir" "$job" "$mode" "$final" complete '' "$index" "$total" "$final_error"
+	owz_job_build_result "$dir" "$job" "$mode" "$final" "$final_error" || :
+	if [ "$(owz_job_active_id 2>/dev/null)" = "$job" ]; then rm -f "$OWZ_JOURNAL/active"; fi
+	rm -f "$dir/snapshot/config" "$dir/snapshot/meta" 2>/dev/null; rmdir "$dir/snapshot" 2>/dev/null || :
+}
+
+owz_job_recover() {
+	local job="$1" dir mode total
+	owz_valid_job_id "$job" || exit 64
+	dir="$OWZ_JOB_ROOT/$job"; [ -d "$dir" ] && [ ! -L "$dir" ] || exit 66
+	if ! owz_lock job_recover; then printf '%s
+' '{"ok":false,"error":"busy"}'; return 0; fi
+	mode=$(cat "$dir/mode" 2>/dev/null)
+	if [ "$mode" = flowseal_update ]; then
+		# Flowseal install never changes /opt/zapret2/config or active_profile. Its file
+		# installs are atomic per file, so interrupted work only needs the journal cleared.
+		[ -r "$dir/result.json" ] || printf '%s
+' '{"ok":true,"mode":"flowseal_update","status":"RECOVERED","error":"worker_lost"}' > "$dir/result.json"
+		owz_job_state_write "$dir" "$job" "$mode" RECOVERED recovered '' 0 1 worker_lost
+		[ "$(owz_job_active_id 2>/dev/null)" = "$job" ] && rm -f "$OWZ_JOURNAL/active"
+		printf '{"ok":true,"job_id":"%s","status":"RECOVERED"}
+' "$job"
+		return 0
+	fi
+	case "$mode" in profile|all) :;; *) printf '%s
+' '{"ok":false,"error":"invalid_job_mode"}'; return 0;; esac
+	total=$(awk 'NF{n++} END{print n+0}' "$dir/profiles" 2>/dev/null)
+	if owz_job_snapshot_restore "$dir"; then
+		owz_job_state_write "$dir" "$job" "$mode" RECOVERED recovered '' 0 "$total" worker_lost
+		owz_job_build_result "$dir" "$job" "$mode" RECOVERED worker_lost || :
+		[ "$(owz_job_active_id 2>/dev/null)" = "$job" ] && rm -f "$OWZ_JOURNAL/active"
+		rm -f "$dir/snapshot/config" "$dir/snapshot/meta" 2>/dev/null
+		rmdir "$dir/snapshot" 2>/dev/null || :
+		printf '{"ok":true,"job_id":"%s","status":"RECOVERED"}
+' "$job"
+	else
+		owz_job_state_write "$dir" "$job" "$mode" ERROR recovery_failed '' 0 "$total" recovery_failed
+		: > "$dir/recovery_failed" 2>/dev/null || :
+		printf '{"ok":false,"job_id":"%s","error":"recovery_failed"}
+' "$job"
+	fi
+}
+
+owz_job_current() {
+	local job dir
+	if [ ! -e "$OWZ_JOURNAL/active" ]; then printf '%s\n' '{"ok":true,"job_id":null}'; return 0; fi
+	if ! job=$(owz_job_active_id); then printf '%s\n' '{"ok":false,"error":"invalid_recovery_journal"}'; return 0; fi
+	dir="$OWZ_JOB_ROOT/$job"
+	[ -r "$dir/state.json" ] || { printf '{"ok":true,"job_id":"%s","status":"PENDING"}\n' "$job"; return 0; }
+	owz_json_file "$dir/state.json" || printf '%s\n' '{"ok":false,"error":"invalid_job_state"}'
+}
+
+owz_job_status() {
+	local job="$1" dir
+	owz_valid_job_id "$job" || exit 64
+	dir="$OWZ_JOB_ROOT/$job"; [ -r "$dir/state.json" ] || { printf '%s\n' '{"ok":false,"error":"job_not_found"}'; return 0; }
+	owz_json_file "$dir/state.json" || printf '%s\n' '{"ok":false,"error":"invalid_job_state"}'
+}
+
+owz_job_result() {
+	local job="$1" dir
+	owz_valid_job_id "$job" || exit 64
+	dir="$OWZ_JOB_ROOT/$job"; [ -d "$dir" ] || { printf '%s\n' '{"ok":false,"error":"job_not_found"}'; return 0; }
+	[ -r "$dir/result.json" ] || { printf '%s\n' '{"ok":false,"error":"result_not_ready"}'; return 0; }
+	owz_json_file "$dir/result.json" || printf '%s\n' '{"ok":false,"error":"invalid_job_result"}'
+}
+
+owz_job_cancel() {
+	local job="$1" dir active
+	owz_valid_job_id "$job" || exit 64
+	dir="$OWZ_JOB_ROOT/$job"; [ -d "$dir" ] || { printf '%s\n' '{"ok":false,"error":"job_not_found"}'; return 0; }
+	active=$(owz_job_active_id 2>/dev/null) || active=''
+	[ "$active" = "$job" ] || { printf '%s\n' '{"ok":false,"error":"job_not_active"}'; return 0; }
+	: > "$dir/cancel" || { printf '%s\n' '{"ok":false,"error":"cancel_failed"}'; return 0; }
+	printf '{"ok":true,"job_id":"%s","cancel_requested":true}\n' "$job"
+}
+
+owz_flowseal_status() {
+	[ -x "$OWZ_FLOWSEAL_UPDATE" ] || { printf '%s
+' '{"ok":false,"error":"flowseal_updater_missing"}'; return 0; }
+	"$OWZ_FLOWSEAL_UPDATE" status
+}
+
+owz_flowseal_check() {
+	[ -x "$OWZ_FLOWSEAL_UPDATE" ] || { printf '%s
+' '{"ok":false,"error":"flowseal_updater_missing"}'; return 0; }
+	"$OWZ_FLOWSEAL_UPDATE" check
+}
+
+owz_result() {
+	local ok="$1" stage="$2" error="$3" cleanup_attempted="$4" cleanup_success="$5"
+	[ -n "$error" ] || error=null
+	[ "$error" = null ] || error="\"$error\""
+	printf '{"ok":%s,"stage":"%s","error":%s,"cleanup_attempted":%s,"cleanup_success":%s,"final_state":"%s","status":' \
+		"$ok" "$stage" "$error" "$cleanup_attempted" "$cleanup_success" "$OWZ_STATE"
+	owz_status
+	printf '}\n'
+}
+
+owz_control() {
+	local action="$1" stage=preflight failure='' cleanup_attempted=false cleanup_success=null daemon_started=false cleanup_failed=false active_profile=''
+	if ! owz_lock "$action"; then
+		printf '%s\n' '{"ok":false,"stage":"lock","error":"busy","cleanup_attempted":false,"cleanup_success":null,"final_state":"UNKNOWN"}'
+		return 0
+	fi
+	owz_status >/dev/null
+	if [ "$OWZ_STATE" = ERROR ]; then
+		failure=probe_failed
+	elif [ "$action" != stop ]; then
+		active_profile=$(uci -q get zapret2.config.active_profile 2>/dev/null) || active_profile=''
+		if [ -n "$active_profile" ]; then
+			owz_profile_load "$active_profile" && [ "$OWZ_PROFILE_COMPATIBLE" = true ] && owz_profile_requirements_ready || failure=active_profile_invalid
+		fi
+	fi
+	if [ -n "$failure" ]; then
+		:
+	elif [ "$action" = start ] && [ "$OWZ_STATE" = RUNNING ]; then
+		:
+	elif [ "$action" = stop ] && [ "$OWZ_STATE" = STOPPED ]; then
+		:
+	else
+		if [ "$action" = stop ] || [ "$action" = restart ] || [ "$OWZ_STATE" = PARTIAL ]; then
+			stage=stop_firewall
+			if [ "$OWZ_FIREWALL" = true ] || [ "$OWZ_QUEUE_RULE" = true ]; then
+				owz_init stop_fw || failure=stop_firewall_failed
+			fi
+			if [ -z "$failure" ]; then
+				stage=stop_daemons
+				if [ "$OWZ_DAEMON" = true ]; then owz_init stop_daemons || failure=stop_daemons_failed; fi
+			fi
+			if [ -z "$failure" ]; then
+				stage=verify_stopped
+				owz_wait_for STOPPED || failure=stop_postcondition_failed
+			fi
+		fi
+		if [ -z "$failure" ] && [ "$action" != stop ]; then
+			stage=sync
+			owz_sync || failure=sync_failed
+			if [ -z "$failure" ]; then
+				stage=start_daemons
+				owz_init start_daemons || failure=start_daemons_failed
+				[ -n "$failure" ] || daemon_started=true
+			fi
+			if [ -z "$failure" ]; then
+				stage=start_firewall
+				owz_init start_fw || failure=start_firewall_failed
+			fi
+		fi
+	fi
+	if [ -z "$failure" ]; then
+		stage=verify_final
+		if [ "$action" = stop ]; then owz_wait_for STOPPED || failure=postcondition_failed
+		else owz_wait_for RUNNING || failure=postcondition_failed; fi
+	fi
+	if [ -n "$failure" ] && [ "$daemon_started" = true ]; then
+		cleanup_attempted=true
+		owz_init stop_fw || cleanup_failed=true
+		owz_init stop_daemons || cleanup_failed=true
+		owz_wait_for STOPPED || cleanup_failed=true
+		if [ "$cleanup_failed" = true ]; then cleanup_success=false; else cleanup_success=true; fi
+	fi
+	owz_status >/dev/null
+	if [ -n "$failure" ]; then owz_result false "$stage" "$failure" "$cleanup_attempted" "$cleanup_success"
+	else owz_result true complete '' false null; fi
+}
+
+if [ "${0##*/}" = service ]; then
+	case "$1" in
+		status) [ "$#" -eq 1 ] && owz_status;;
+		start|stop|restart) [ "$#" -eq 1 ] && owz_control "$1";;
+		profile_active) [ "$#" -eq 1 ] && owz_profile_active;;
+		profile_check) [ "$#" -eq 2 ] && { owz_profile_load "$2" && printf '%s\n' '{"ok":true}' || printf '%s\n' '{"ok":false,"error":"invalid_profile"}'; };;
+		profile_overlay_active) [ "$#" -eq 1 ] && owz_profile_overlay_active;;
+		apply_profile) [ "$#" -eq 2 ] && owz_apply_profile "$2";;
+		set_manual) [ "$#" -eq 1 ] && owz_set_manual;;
+		job_start_profile) [ "$#" -eq 2 ] && owz_job_prepare profile "$2";;
+		job_start_all) [ "$#" -eq 1 ] && owz_job_prepare all '';;
+		job_start_flowseal_update) [ "$#" -eq 1 ] && owz_job_prepare flowseal_update '';;
+		job_run) [ "$#" -eq 2 ] && owz_job_run "$2";;
+		job_recover) [ "$#" -eq 2 ] && owz_job_recover "$2";;
+		job_current) [ "$#" -eq 1 ] && owz_job_current;;
+		job_status) [ "$#" -eq 2 ] && owz_job_status "$2";;
+		job_result) [ "$#" -eq 2 ] && owz_job_result "$2";;
+		job_cancel) [ "$#" -eq 2 ] && owz_job_cancel "$2";;
+		flowseal_status) [ "$#" -eq 1 ] && owz_flowseal_status;;
+		flowseal_check) [ "$#" -eq 1 ] && owz_flowseal_check;;
+		*) exit 64;;
+	esac
+fi

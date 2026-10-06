@@ -146,3 +146,8 @@ else
 	rm -f "$ZAPRET_CONFIG_NEW"
 	return 97
 fi
+
+# Keep the selected OpenWRTZapret profile active after upstream UCI syncs.
+if [ "$ZAPRET_CFG_NAME" = zapret2 ] && [ "${OWZ_PROFILE_SKIP_ACTIVE:-0}" != 1 ] && [ -x /usr/libexec/openwrtzapret/service ]; then
+	/usr/libexec/openwrtzapret/service profile_overlay_active >/dev/null || exit 98
+fi

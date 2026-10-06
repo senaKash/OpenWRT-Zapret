@@ -6,7 +6,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=zapret2
 PKG_VERSION:=0.9.20260307
-PKG_RELEASE:=1
+PKG_RELEASE:=3
 
 PKG_MAINTAINER:=bol-van
 PKG_LICENSE:=MIT
@@ -320,8 +320,8 @@ if [ -z "$${IPKG_INSTROOT}" ]; then
 		fi
 	fi
 	if $${PKG_CHECK} luci-app-zapret2 2>/dev/null | grep -q . ; then
-		SVC_FILE=/www/luci-static/resources/view/zapret2/service.js
-		if [ ! -f "$${SVC_FILE}" ] || ! grep -Fq "/remittor/zapret-openwrt" "$${SVC_FILE}"; then
+		API_FILE=/usr/share/openwrtzapret/api
+		if [ ! -f "$${API_FILE}" ] || ! grep -Fxq 'OPENWRTZAPRET_API=1' "$${API_FILE}"; then
 			echo "Please uninstall incompatible \"luci-app-zapret2\" package!"
 			exit 55
 		fi

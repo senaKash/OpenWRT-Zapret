@@ -1,0 +1,65 @@
+#!/bin/sh
+DATA=/etc/openwrtzapret/state
+JOURNAL=$DATA/journal
+JOBS=$DATA/jobs
+SERVICE=/usr/libexec/openwrtzapret/service
+
+valid_job_id() {
+	local id="$1" a b
+	case "$id" in ''|*[!0-9-]*) return 1;; esac
+	a=${id%-*}; b=${id##*-}
+	[ "$a" != "$id" ] && [ -n "$a" ] && [ -n "$b" ] || return 1
+	case "$a$b" in *[!0-9]*) return 1;; esac
+}
+
+meta_get() {
+	sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -n 1
+}
+
+worker_matches() {
+	local pid="$1" job="$2" cmd
+	case "$pid" in ''|*[!0-9]*) return 1;; esac
+	[ "$pid" -gt 1 ] 2>/dev/null || return 1
+	[ -r "/proc/$pid/cmdline" ] || return 1
+	cmd=$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || return 1
+	case "$cmd" in *openwrtzapret/service*job_run*" $job"*) return 0;; esac
+	return 1
+}
+
+while :; do
+	if [ -r "$JOURNAL/active" ]; then
+		job=$(cat "$JOURNAL/active" 2>/dev/null)
+		if valid_job_id "$job" && [ -d "$JOBS/$job" ] && [ ! -L "$JOBS/$job" ]; then
+			# A failed recovery is intentionally sticky. Retrying every five seconds
+			# could repeatedly flap networking; leave evidence for explicit repair.
+			[ -e "$JOBS/$job/recovery_failed" ] && { sleep 5; continue; }
+			meta="$JOBS/$job/meta"
+			pid=$(meta_get "$meta" worker_pid)
+			deadline=$(meta_get "$meta" deadline)
+			created=$(meta_get "$meta" created)
+			now=$(date +%s)
+			case "$deadline" in ''|*[!0-9]*) deadline=0;; esac
+			case "$created" in ''|*[!0-9]*) created=0;; esac
+			if worker_matches "$pid" "$job"; then
+				if [ "$deadline" -gt 0 ] && [ "$now" -gt "$deadline" ]; then
+					kill -TERM "$pid" 2>/dev/null || :
+					sleep 2
+					worker_matches "$pid" "$job" && kill -KILL "$pid" 2>/dev/null || :
+					sleep 1
+					"$SERVICE" job_recover "$job" >/dev/null 2>&1 || :
+				fi
+			else
+				# Give a newly queued worker a short launch grace period.
+				if [ "$created" -gt 0 ] && [ $((now - created)) -lt 15 ]; then
+					:
+				else
+					"$SERVICE" job_recover "$job" >/dev/null 2>&1 || :
+				fi
+			fi
+		else
+			# Keep malformed recovery evidence for manual inspection instead of deleting it.
+			:
+		fi
+	fi
+	sleep 5
+done

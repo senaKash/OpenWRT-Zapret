@@ -77,12 +77,10 @@ return baseclass.extend({
         expect: { '': {} }
     }),
 
-    callInitAction: rpc.declare({
-        object: 'luci',
-        method: 'setInitAction',
-        params: [ 'name', 'action' ],
-        expect: { result: false }
-    }),
+    callStart: rpc.declare({ object: 'openwrtzapret', method: 'start', expect: { '': {} }, reject: true }),
+    callStop: rpc.declare({ object: 'openwrtzapret', method: 'stop', expect: { '': {} }, reject: true }),
+    callRestart: rpc.declare({ object: 'openwrtzapret', method: 'restart', expect: { '': {} }, reject: true }),
+    callStatus: rpc.declare({ object: 'openwrtzapret', method: 'status', expect: { '': {} }, reject: true }),
 
     getSvcInfo: function(svc_name = null) {
         let name = (svc_name) ? svc_name : this.appName;
@@ -144,17 +142,20 @@ return baseclass.extend({
 
     handleServiceAction: function(name, action, throwed = false)
     {
-        console.log('handleServiceAction: '+name+' '+action);
-        return this.callInitAction(name, action).then(success => {
-            if (!success) {
-                throw _('Command failed');
+        let method = { start: this.callStart, stop: this.callStop, restart: this.callRestart }[action];
+        if (!method) return Promise.reject(Error('Unsupported service action'));
+        return method().then(response => {
+            if (!response?.ok) {
+                let message = (response?.stage || 'unknown') + ': ' + (response?.error || 'unknown_error');
+                if (response?.cleanup_attempted)
+                    message += response.cleanup_success ? ' (cleanup succeeded)' : ' (cleanup failed; inspect service state)';
+                if (response?.final_state) message += ' [' + response.final_state + ']';
+                throw Error(message);
             }
-            return true;
+            return response.status;
         }).catch(e => {
             ui.addNotification(null, E('p', _('Service action failed "%s %s": %s').format(name, action, e)));
-            if (throwed) {
-                throw e;
-            }
+            if (throwed) throw e;
         });
     },
 
@@ -164,10 +165,7 @@ return baseclass.extend({
         try {
             let exec_cmd = null;
             let exec_arg = [ ];
-            if (action == 'start' || action == 'restart') {
-                exec_cmd = this.syncCfgPath;
-                errmsg = _('Unable to run sync_config.sh script.');
-            }
+            // Runtime actions synchronize the config inside the fixed backend.
             if (action == 'reset') {
                 exec_cmd = this.defaultCfgPath;
                 exec_arg = args;  // (reset_ipset)(sync) ==> restore all configs + sync config

@@ -1,0 +1,7 @@
+# Third-party notices
+
+OpenWRTZapret incorporates the source tree of [remittor/zapret-openwrt](https://github.com/remittor/zapret-openwrt), `master` commit `124c9f7983dcd6fddf46d3e863fc67853017c4fd`. Its OpenWrt and LuCI files retain remittor copyright headers. The repository's MIT text is preserved in [LICENSE](LICENSE). The package builds the separately maintained [bol-van/zapret2](https://github.com/bol-van/zapret2) engine from a pinned commit under its MIT notice. OpenWRTZapret is not the Zapret2 project itself.
+
+The existing diagnostics refer to the [hyperion-cs/dpi-checkers](https://github.com/hyperion-cs/dpi-checkers) test suite and download suite data at runtime. Review its license before copying or embedding that data in OpenWRTZapret.
+
+[Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) is an external strategy source used by the Phase G parser/converter. Its [LICENSE.txt](https://github.com/Flowseal/zapret-discord-youtube/blob/main/LICENSE.txt) states MIT terms for repository material and separate WinDivert terms for Windows binaries. This repository contains a small `general (ALT).bat` conversion fixture supplied for compatibility testing, but does not bundle or execute Flowseal Windows binaries. The Phase H updater downloads Flowseal release material at runtime, imports only strategy data and referenced lists/blobs, records the source version/archive hash, and never executes downloaded Windows binaries or scripts. OpenWRTZapret is not affiliated with Flowseal.

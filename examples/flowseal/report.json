@@ -1,0 +1,13 @@
+{
+  "source_version": "fixture-2026.10",
+  "game_filter": "none",
+  "profiles": [
+    {
+      "file": "general (ALT).bat",
+      "id": "flowseal-general-alt",
+      "compatible": true,
+      "unsupported": [],
+      "output": "/tmp/owz-g-out/flowseal-general-alt.json"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "builtin-general-alt",
+  "name": "general (ALT) reference",
+  "source": "builtin",
+  "source_version": "reference-1",
+  "compatible": false,
+  "tcp_ports": "80,443",
+  "udp_ports": "443",
+  "nfqws2": "",
+  "requirements": {
+    "blobs": [],
+    "hostlists": [],
+    "ipsets": []
+  },
+  "content_hash": "sha256:70d54ac47913027179a0ae1a041e56e0202261d88c97675b7aaa0e573734a23d"
+}
