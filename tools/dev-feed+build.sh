@@ -81,3 +81,23 @@ printf "Коммит: %s\n" "$(git -C "$FEED_DIR" rev-parse --short HEAD)"
 printf "Ветка:  %s\n" "$(git -C "$FEED_DIR" branch --show-current)"
 printf "${GREEN}=============================================${RESET}\n"
 printf '\a'
+
+
+step "Отправляю APK на роутер"
+
+ROUTER="root@192.168.1.1"
+REMOTE_APK="/tmp/$(basename "$APK")"
+
+printf "${YELLOW}Роутер:${RESET} %s\n" "$ROUTER"
+printf "${YELLOW}Файл:${RESET} %s\n" "$REMOTE_APK"
+printf "Введите пароль root роутера:\n\n"
+
+scp -O "$APK" "$ROUTER:$REMOTE_APK"
+
+printf "\n${GREEN}=============================================${RESET}\n"
+printf "${GREEN} APK ОТПРАВЛЕН НА РОУТЕР${RESET}\n"
+printf "${GREEN}=============================================${RESET}\n"
+printf "%s\n" "$REMOTE_APK"
+printf "\nДля установки на роутере:\n"
+printf "${CYAN}apk add --allow-untrusted '%s'${RESET}\n" "$REMOTE_APK"
+printf "${GREEN}=============================================${RESET}\n"

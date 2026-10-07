@@ -239,35 +239,75 @@ make_report() {
 }
 
 install_staged() {
-	local version="$1" profiles_stage="$2" asset_stage="$3" manifest="$4" report="$5" jobdir="$6" archive_hash="$7" asset_final asset_tmp active file base ptmp id now
+	local version="$1" profiles_stage="$2" asset_stage="$3" manifest="$4" report="$5" jobdir="$6" archive_hash="$7"
+	local asset_final asset_new asset_old profile_new profile_old state_stage active file base old_active old_version name now
+	local had_asset=false had_profiles=false asset_live=false profiles_live=false failed=false
+	valid_version "$version" || return 1
+	[ -d "$profiles_stage" ] && [ -d "$asset_stage" ] || return 1
 	mkdir -p "$STATE_ROOT" "$ASSET_ROOT" "${PROFILE_ROOT%/*}" || return 1
 	chmod 700 "$STATE_ROOT" "$ASSET_ROOT" "${PROFILE_ROOT%/*}" 2>/dev/null || :
 	asset_final="$ASSET_ROOT/$version"
-	if [ ! -d "$asset_final" ]; then
-		asset_tmp="$ASSET_ROOT/.${version}.new.$$"
-		rm -rf "$asset_tmp"; mkdir -p "$asset_tmp" || return 1
-		cp -R "$asset_stage"/. "$asset_tmp"/ || { rm -rf "$asset_tmp"; return 1; }
-		mv "$asset_tmp" "$asset_final" || { rm -rf "$asset_tmp"; return 1; }
+	asset_new="$ASSET_ROOT/.${version}.new.$$"; asset_old="$ASSET_ROOT/.${version}.old.$$"
+	profile_new="${PROFILE_ROOT}.new.$$"; profile_old="${PROFILE_ROOT}.old.$$"
+	state_stage="$STATE_ROOT/.install.$$"
+	[ ! -e "$asset_new" ] && [ ! -e "$asset_old" ] && [ ! -e "$profile_new" ] && [ ! -e "$profile_old" ] && [ ! -e "$state_stage" ] || return 1
+	[ ! -L "$asset_final" ] && [ ! -L "$PROFILE_ROOT" ] || return 1
+	mkdir -p "$asset_new" "$profile_new" "$state_stage" || return 1
+	chmod 700 "$asset_new" "$profile_new" "$state_stage" 2>/dev/null || :
+	# Сначала полностью готовим новый набор на тех же файловых системах.
+	cp -R "$asset_stage"/. "$asset_new"/ || failed=true
+	if [ "$failed" = false ]; then
+		for file in "$profiles_stage"/*.json; do
+			[ -f "$file" ] || continue
+			base=${file##*/}
+			cp "$file" "$profile_new/$base" && chmod 600 "$profile_new/$base" || { failed=true; break; }
+		done
 	fi
-	mkdir -p "$PROFILE_ROOT" || return 1
 	active=$(uci -q get zapret2.config.active_profile 2>/dev/null) || active=''
-	for file in "$profiles_stage"/*.json; do
-		[ -f "$file" ] || continue
-		base=${file##*/}; ptmp="$PROFILE_ROOT/.${base}.new.$$"
-		cp "$file" "$ptmp" && chmod 600 "$ptmp" && mv -f "$ptmp" "$PROFILE_ROOT/$base" || { rm -f "$ptmp"; return 1; }
+	case "$active" in ''|flowseal-[a-z0-9]*) case "$active" in *[!a-z0-9_-]*) failed=true;; esac;; *) active='';; esac
+	if [ "$failed" = false ] && [ -n "$active" ] && [ ! -f "$profile_new/$active.json" ] && [ -d "$PROFILE_ROOT" ]; then
+		old_active=$(find "$PROFILE_ROOT" -type f -name "$active.json" -print 2>/dev/null | LC_ALL=C sort | sed -n '1p')
+		if [ -n "$old_active" ]; then
+			old_version=$(jsonfilter -i "$old_active" -e '@.source_version' 2>/dev/null) || failed=true
+			# Активный профиль той же версии нельзя оставить со старым набором requirements.
+			if [ "$failed" = false ]; then
+				if [ "$old_version" = "$version" ]; then failed=true
+				else cp "$old_active" "$profile_new/$active.json" && chmod 600 "$profile_new/$active.json" || failed=true; fi
+			fi
+		fi
+	fi
+	for name in manifest.tsv report.json metadata.json; do
+		[ "$failed" = false ] || break
+		if [ -f "$STATE_ROOT/$name" ]; then cp -p "$STATE_ROOT/$name" "$state_stage/old-$name" || failed=true; fi
 	done
-	# Remove old Flowseal profiles only after the new set is fully installed. Never remove the active one.
-	for file in "$PROFILE_ROOT"/*.json; do
-		[ -f "$file" ] || continue
-		base=${file##*/}; id=${base%.json}
-		[ "$id" = "$active" ] && continue
-		[ -f "$profiles_stage/$base" ] || rm -f "$file"
-	done
-	cp "$manifest" "$STATE_ROOT/manifest.tsv.tmp.$$" && mv -f "$STATE_ROOT/manifest.tsv.tmp.$$" "$STATE_ROOT/manifest.tsv" || return 1
-	cp "$report" "$STATE_ROOT/report.json.tmp.$$" && mv -f "$STATE_ROOT/report.json.tmp.$$" "$STATE_ROOT/report.json" || return 1
+	[ "$failed" = false ] && cp "$manifest" "$state_stage/new-manifest.tsv" || failed=true
+	[ "$failed" = false ] && cp "$report" "$state_stage/new-report.json" || failed=true
 	now=$(date +%s)
-	printf '{"source":"flowseal","source_version":"%s","archive_sha256":"sha256:%s","updated_at":%s}\n' "$version" "$archive_hash" "$now" > "$STATE_ROOT/metadata.json.tmp.$$" || return 1
-	mv -f "$STATE_ROOT/metadata.json.tmp.$$" "$STATE_ROOT/metadata.json" || return 1
+	[ "$failed" = false ] && printf '{"source":"flowseal","source_version":"%s","archive_sha256":"sha256:%s","updated_at":%s}\n' "$version" "$archive_hash" "$now" > "$state_stage/new-metadata.json" || failed=true
+	if [ "$failed" = true ]; then rm -rf "$asset_new" "$profile_new" "$state_stage"; return 1; fi
+	# BusyBox mv не заменяет непустой каталог: старый набор держим как backup до конца установки.
+	if [ -d "$asset_final" ]; then mv "$asset_final" "$asset_old" && had_asset=true || failed=true; fi
+	if [ "$failed" = false ]; then mv "$asset_new" "$asset_final" && asset_live=true || failed=true; fi
+	if [ "$failed" = false ] && [ -d "$PROFILE_ROOT" ]; then mv "$PROFILE_ROOT" "$profile_old" && had_profiles=true || failed=true; fi
+	if [ "$failed" = false ]; then mv "$profile_new" "$PROFILE_ROOT" && profiles_live=true || failed=true; fi
+	if [ "$failed" = false ]; then
+		for name in manifest.tsv report.json metadata.json; do
+			cp "$state_stage/new-$name" "$STATE_ROOT/$name.tmp.$$" && mv -f "$STATE_ROOT/$name.tmp.$$" "$STATE_ROOT/$name" || { failed=true; break; }
+		done
+	fi
+	if [ "$failed" = true ]; then
+		for name in manifest.tsv report.json metadata.json; do
+			if [ -f "$state_stage/old-$name" ]; then cp -p "$state_stage/old-$name" "$STATE_ROOT/$name.tmp.$$" && mv -f "$STATE_ROOT/$name.tmp.$$" "$STATE_ROOT/$name" || :
+			else rm -f "$STATE_ROOT/$name"; fi
+		done
+		[ "$profiles_live" = false ] || rm -rf "$PROFILE_ROOT"
+		[ "$had_profiles" = false ] || mv "$profile_old" "$PROFILE_ROOT" || :
+		[ "$asset_live" = false ] || rm -rf "$asset_final"
+		[ "$had_asset" = false ] || mv "$asset_old" "$asset_final" || :
+		rm -rf "$asset_new" "$profile_new" "$state_stage"
+		return 1
+	fi
+	rm -rf "$asset_old" "$profile_old" "$state_stage"
 	: > "$jobdir/flowseal_committed" 2>/dev/null || :
 	return 0
 }

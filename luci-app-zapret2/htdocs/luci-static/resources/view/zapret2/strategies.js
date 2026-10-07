@@ -52,7 +52,6 @@ return view.extend({
         if (this.testButton) this.testButton.disabled = locked || !this.canTest(id);
         if (this.testAllButton) this.testAllButton.disabled = locked || !this.profiles.some(p => p.compatible === true);
         if (this.cancelButton) this.cancelButton.disabled = !this.testing || !this.activeJob;
-        if (this.flowsealCheckButton) this.flowsealCheckButton.disabled = locked;
         if (this.flowsealUpdateButton) this.flowsealUpdateButton.disabled = locked;
         for (let button of (this.rowApplyButtons || [])) button.disabled = locked || button.profileCompatible !== true;
     },
@@ -96,6 +95,7 @@ return view.extend({
             let result = id == '__manual__' ? await setManual() : await applyProfile(id);
             if (!result?.ok) {
                 let detail = [result?.stage || 'unknown', result?.error || 'unknown_error'].join(': ');
+                if (result?.missing_requirement) detail += ' — ' + _('missing requirement: %s').format(result.missing_requirement);
                 if (!['validation', 'lock', 'snapshot'].includes(result?.stage))
                     detail += result?.rolled_back ? ' (' + _('rolled back') + ')' : ' (' + _('rollback requires inspection') + ')';
                 if (result?.state) detail += ' [' + result.state + ']';
@@ -321,6 +321,8 @@ return view.extend({
         for (let profile of profiles) {
             let result = profile.latest_result;
             let tests = result?.tests || {};
+            let resultText = result?.status || _('Not tested');
+            if (result?.reason) resultText += ' — ' + result.reason;
             let apply = E('button', {
                 'class': 'btn cbi-button-apply',
                 'disabled': profile.compatible !== true || this.testing,
@@ -330,13 +332,12 @@ return view.extend({
             this.rowApplyButtons.push(apply);
             this.resultsBody.appendChild(E('tr', [
                 E('td', profile.name),
-                E('td', result?.status || _('Not tested')),
+                E('td', resultText),
                 E('td', result?.tested_at ? new Date(result.tested_at * 1000).toLocaleString() : '—'),
                 E('td', this.testCell(tests.youtube)),
-                E('td', this.testCell(tests.googlevideo)),
                 E('td', this.testCell(tests.discord)),
-                E('td', this.testCell(tests.discord_media)),
-                E('td', this.testCell(tests.discord_voice_udp)),
+                E('td', this.testCell(tests.cloudflare)),
+                E('td', this.testCell(tests.github)),
                 E('td', apply)
             ]));
         }
@@ -353,7 +354,6 @@ return view.extend({
         this.flowsealLocal = E('span', '—');
         this.flowsealRemote = E('span', '—');
         this.flowsealSummary = E('span', '—');
-        this.flowsealCheckButton = E('button', { 'class': 'btn cbi-button-action', 'click': L.bind(this.checkFlowseal, this, false) }, _('Check Updates'));
         this.flowsealUpdateButton = E('button', { 'class': 'btn cbi-button-apply', 'click': L.bind(this.startFlowsealSync, this) }, _('Update Strategies'));
         this.resultsBody = E('tbody');
 
@@ -374,7 +374,7 @@ return view.extend({
                     E('label', { 'class': 'cbi-value-title' }, _('Background job')),
                     E('div', { 'class': 'cbi-value-field' }, [this.jobText, ' ', this.cancelButton])
                 ]),
-                E('p', { 'class': 'cbi-value-description' }, _('Tests temporarily activate a strategy, run network reachability checks, and restore the previous configuration. Discord Voice UDP is a transport check only, not a real voice call.'))
+                E('p', { 'class': 'cbi-value-description' }, _('Tests temporarily activate a strategy, check HTTPS reachability, and restore the previous configuration.'))
             ]),
             E('div', { 'class': 'cbi-section' }, [
                 E('h3', _('Strategy updates')),
@@ -390,19 +390,19 @@ return view.extend({
                     E('label', { 'class': 'cbi-value-title' }, _('Status')),
                     E('div', { 'class': 'cbi-value-field' }, this.flowsealSummary)
                 ]),
-                E('div', { 'style': 'display:flex;flex-wrap:wrap;gap:.5rem' }, [ this.flowsealCheckButton, this.flowsealUpdateButton ]),
+                E('div', { 'style': 'display:flex;flex-wrap:wrap;gap:.5rem' }, [ this.flowsealUpdateButton ]),
                 E('p', { 'class': 'cbi-value-description' }, _('Source: Flowseal. Strategy BAT files are imported as inert data and are never executed. Windows executables are never run, and updating never changes the active strategy automatically.'))
             ]),
             E('div', { 'class': 'cbi-section', 'style': 'overflow-x:auto' }, [
                 E('h3', _('Strategy test results')),
                 E('table', { 'class': 'table' }, [
-                    E('thead', E('tr', [
+                    E('thead', {}, [ E('tr', {}, [
                         E('th', { 'style': 'cursor:pointer', 'click': L.bind(this.setSort, this, 'name'), 'title': _('Sort') }, _('Strategy')),
                         E('th', { 'style': 'cursor:pointer', 'click': L.bind(this.setSort, this, 'result'), 'title': _('Sort') }, _('Result')),
                         E('th', { 'style': 'cursor:pointer', 'click': L.bind(this.setSort, this, 'tested'), 'title': _('Sort') }, _('Tested')),
-                        E('th', _('YouTube')), E('th', _('GoogleVideo')), E('th', _('Discord')), E('th', _('Discord Media')),
-                        E('th', _('Discord Voice UDP / transport')), E('th', _('Action'))
-                    ])),
+                        E('th', {}, _('YouTube')), E('th', {}, _('Discord')),
+                        E('th', {}, _('Cloudflare')), E('th', {}, _('GitHub')), E('th', {}, _('Action'))
+                    ]) ]),
                     this.resultsBody
                 ])
             ])

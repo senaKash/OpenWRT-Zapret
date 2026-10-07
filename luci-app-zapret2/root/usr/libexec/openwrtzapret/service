@@ -308,13 +308,19 @@ owz_profile_load() {
 }
 
 owz_profile_requirements_ready() {
-	local list
+	local list item
+	OWZ_MISSING_REQUIREMENT=''
 	for list in "$OWZ_PROFILE_BLOBS" "$OWZ_PROFILE_HOSTLISTS" "$OWZ_PROFILE_IPSETS"; do
 		[ -n "$list" ] || continue
-		printf '%s\n' "$list" | while IFS= read -r item; do
+		while IFS= read -r item; do
 			[ -n "$item" ] || continue
-			[ -f "$item" ] && [ ! -L "$item" ] || exit 1
-		done || return 1
+			if [ ! -f "$item" ] || [ -L "$item" ]; then
+				OWZ_MISSING_REQUIREMENT=$item
+				return 1
+			fi
+		done <<EOF
+$list
+EOF
 	done
 	return 0
 }
@@ -374,11 +380,14 @@ owz_profile_restore_pointer() {
 }
 
 owz_profile_result() {
-	local ok="$1" id="$2" stage="$3" rolled="$4" error="$5"
+	local ok="$1" id="$2" stage="$3" rolled="$4" error="$5" missing=null
+	if [ "$error" = missing_requirements ] && [ -n "${OWZ_MISSING_REQUIREMENT:-}" ]; then
+		missing="\"$OWZ_MISSING_REQUIREMENT\""
+	fi
 	[ -n "$error" ] || error=null
 	[ "$error" = null ] || error="\"$error\""
 	owz_status >/dev/null
-	printf '{"ok":%s,"profile":"%s","stage":"%s","rolled_back":%s,"error":%s,"state":"%s"}\n' "$ok" "$id" "$stage" "$rolled" "$error" "$OWZ_STATE"
+	printf '{"ok":%s,"profile":"%s","stage":"%s","rolled_back":%s,"error":%s,"missing_requirement":%s,"state":"%s"}\n' "$ok" "$id" "$stage" "$rolled" "$error" "$missing" "$OWZ_STATE"
 }
 
 owz_restore_snapshot() {
@@ -668,18 +677,16 @@ owz_probe_voice_udp() {
 }
 
 owz_profile_test_network() {
-	local youtube googlevideo discord media voice ys gs ds ms vs overall
+	local youtube discord cloudflare github ys ds cs gs overall
 	youtube=$(owz_probe_http 'https://www.youtube.com/generate_204'); ys=$?
-	googlevideo=$(owz_probe_http 'https://redirector.googlevideo.com/report_mapping?di=no'); gs=$?
 	discord=$(owz_probe_http 'https://discord.com/api/v10/gateway'); ds=$?
-	media=$(owz_probe_http 'https://cdn.discordapp.com/'); ms=$?
-	voice=$(owz_probe_voice_udp); vs=$?
-	if [ "$ys" -ne 0 ] || [ "$gs" -ne 0 ] || [ "$ds" -ne 0 ] || [ "$ms" -ne 0 ]; then overall=FAIL
-	elif [ "$vs" -ne 0 ]; then overall=FAIL
-	elif printf '%s' "$voice" | grep -q '"status":"PASS"'; then overall=PASS
-	else overall=PARTIAL; fi
+	cloudflare=$(owz_probe_http 'https://www.cloudflare.com/cdn-cgi/trace'); cs=$?
+	github=$(owz_probe_http 'https://api.github.com/zen'); gs=$?
+	if [ "$ys" -ne 0 ] || [ "$ds" -ne 0 ]; then overall=FAIL
+	elif [ "$cs" -ne 0 ] || [ "$gs" -ne 0 ]; then overall=PARTIAL
+	else overall=PASS; fi
 	OWZ_TEST_OVERALL=$overall
-	OWZ_TESTS_JSON=$(printf '{"youtube":%s,"googlevideo":%s,"discord":%s,"discord_media":%s,"discord_voice_udp":%s}' "$youtube" "$googlevideo" "$discord" "$media" "$voice")
+	OWZ_TESTS_JSON=$(printf '{"youtube":%s,"discord":%s,"cloudflare":%s,"github":%s}' "$youtube" "$discord" "$cloudflare" "$github")
 }
 
 owz_profile_result_write() {
@@ -747,7 +754,8 @@ owz_job_test_one() {
 	else
 		status=FAIL
 		reason=$failure
-		tests='{"youtube":{"status":"SKIP"},"googlevideo":{"status":"SKIP"},"discord":{"status":"SKIP"},"discord_media":{"status":"SKIP"},"discord_voice_udp":{"status":"SKIP"}}'
+		if [ "$failure" = missing_requirements ] && [ -n "$OWZ_MISSING_REQUIREMENT" ]; then reason="missing requirement: $OWZ_MISSING_REQUIREMENT"; fi
+		tests='{"youtube":{"status":"SKIP"},"discord":{"status":"SKIP"},"cloudflare":{"status":"SKIP"},"github":{"status":"SKIP"}}'
 	fi
 	if owz_job_snapshot_restore "$dir"; then restored=true; else restored=false; fi
 	if [ "$restored" != true ]; then
