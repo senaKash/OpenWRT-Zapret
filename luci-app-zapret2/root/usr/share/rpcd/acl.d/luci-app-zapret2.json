@@ -59,6 +59,7 @@
 					"profile_active",
 					"list_profiles",
 					"get_profile",
+					"get_profile_result",
 					"current_job",
 					"job_status",
 					"job_result",

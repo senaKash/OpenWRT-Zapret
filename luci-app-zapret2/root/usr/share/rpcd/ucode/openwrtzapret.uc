@@ -27,12 +27,12 @@ function validJobId(id) {
 	return type(id) == 'string' && match(id, /^[0-9]+-[0-9]+$/);
 }
 
-function latestResult(profile) {
-	if (!profile || !validId(profile.id))
+function readProfileResult(id) {
+	if (!validId(id))
 		return null;
 	try {
-		let result = json(readfile('/etc/openwrtzapret/state/results/' + profile.id + '.json', 262144));
-		if (!result || result.profile_id != profile.id || result.content_hash != profile.content_hash || result.source_version != profile.source_version)
+		let result = json(readfile('/etc/openwrtzapret/state/results/' + id + '.json', 262144));
+		if (!result || result.profile_id != id)
 			return null;
 		return result;
 	}
@@ -41,12 +41,28 @@ function latestResult(profile) {
 	}
 }
 
+function latestResult(profile) {
+	if (!profile || !validId(profile.id))
+		return null;
+	let result = readProfileResult(profile.id);
+	if (!result || result.content_hash != profile.content_hash || result.source_version != profile.source_version)
+		return null;
+	return result;
+}
+
+function getProfileResult(id) {
+	if (!validId(id))
+		return { ok: false, error: 'invalid_profile_id' };
+	return { ok: true, result: readProfileResult(id) };
+}
+
 function getProfile(id) {
 	if (!validId(id))
 		return { ok: false, error: 'invalid_profile_id' };
 	let result = invoke('profile_get', id);
 	if (!result.ok || !result.profile || result.profile.id != id)
 		return { ok: false, error: result.error || 'invalid_profile_json' };
+	result.profile.latest_result = latestResult(result.profile);
 	return result;
 }
 
@@ -54,20 +70,14 @@ function listProfiles() {
 	let listing = invoke('profile_list');
 	if (!listing.ok)
 		return listing;
-	let profiles = [];
-	for (let id in listing.ids || []) {
-		if (!validId(id))
+	let profiles = listing.profiles || [];
+	for (let i = 0; i < length(profiles); i++) {
+		let profile = profiles[i];
+		if (!validId(profile.id))
 			continue;
-		let result = getProfile(id);
-		if (result.ok) {
-			result.profile.latest_result = latestResult(result.profile);
-			push(profiles, result.profile);
-		}
+		profile.latest_result = latestResult(profile);
 	}
-	let active = invoke('profile_active');
-	if (!active.ok)
-		return active;
-	return { ok: true, profiles: profiles, active_profile: active.profile || null };
+	return listing;
 }
 
 return {
@@ -80,6 +90,7 @@ return {
 		set_manual: { call: function() { return invoke('set_manual'); } },
 		list_profiles: { call: function() { return listProfiles(); } },
 		get_profile: { args: { id: 'string' }, call: function(request) { return getProfile(request.args.id); } },
+		get_profile_result: { args: { id: 'string' }, call: function(request) { return getProfileResult(request.args.id); } },
 		apply_profile: { args: { id: 'string' }, call: function(request) {
 			if (!validId(request.args.id))
 				return { ok: false, profile: request.args.id, stage: 'validation', rolled_back: false, error: 'invalid_profile_id', state: 'ERROR' };

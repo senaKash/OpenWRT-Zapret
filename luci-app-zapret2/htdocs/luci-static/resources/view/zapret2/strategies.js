@@ -5,6 +5,8 @@
 'require view';
 
 const listProfiles = rpc.declare({ object: 'openwrtzapret', method: 'list_profiles', expect: { '': {} }, reject: true });
+const getProfileResult = rpc.declare({ object: 'openwrtzapret', method: 'get_profile_result', params: [ 'id' ], expect: { '': {} }, reject: true });
+const getStatus = rpc.declare({ object: 'openwrtzapret', method: 'status', expect: { '': {} }, reject: true });
 const getActiveProfile = rpc.declare({ object: 'openwrtzapret', method: 'profile_active', expect: { '': {} }, reject: true });
 const applyProfile = rpc.declare({ object: 'openwrtzapret', method: 'apply_profile', params: [ 'id' ], expect: { '': {} }, reject: true });
 const setManual = rpc.declare({ object: 'openwrtzapret', method: 'set_manual', expect: { '': {} }, reject: true });
@@ -18,6 +20,11 @@ const flowsealStatus = rpc.declare({ object: 'openwrtzapret', method: 'flowseal_
 const flowsealCheck = rpc.declare({ object: 'openwrtzapret', method: 'flowseal_check', expect: { '': {} }, reject: true });
 const startFlowsealUpdate = rpc.declare({ object: 'openwrtzapret', method: 'start_flowseal_update', expect: { '': {} }, reject: true });
 
+document.head.appendChild(E('link', {
+    rel: 'stylesheet',
+    href: L.resource('view/zapret2/strategies.css')
+}));
+
 return view.extend({
     busy: false,
     testing: false,
@@ -26,9 +33,49 @@ return view.extend({
     selectedProfileId: null,
     sortKey: 'name',
     sortAsc: true,
+    runtimeState: 'ERROR',
+    lastIdleRefresh: 0,
+    idleRefreshMs: 10000,
 
     load: function() {
-        return Promise.all([listProfiles(), currentJob(), flowsealStatus()]);
+        // Критический путь загрузки содержит только локальные данные, нужные для первого render.
+        return Promise.all([listProfiles(), currentJob(), getStatus().catch(() => null)]);
+    },
+
+    badgeClass: function(value) {
+        let kind = String(value || '').toUpperCase();
+        let color = {
+            RUNNING: 'pass', PASS: 'pass',
+            PARTIAL: 'partial',
+            FAIL: 'fail', ERROR: 'fail',
+            TESTING: 'testing',
+            STOPPED: 'skip', SKIP: 'skip'
+        }[kind] || 'neutral';
+        return 'owz-badge owz-badge-' + color;
+    },
+
+    badge: function(value, title) {
+        return E('span', { 'class': this.badgeClass(value), 'title': title || '' }, value);
+    },
+
+    setRuntimeState: function(status) {
+        let valid = status && !status.error &&
+            ['running', 'daemon', 'firewall', 'nfqueue', 'partial'].every(key => typeof status[key] == 'boolean');
+        if (valid && status.running && status.daemon && status.firewall && status.nfqueue && !status.partial)
+            this.runtimeState = 'RUNNING';
+        else if (valid && !status.running && !status.daemon && !status.firewall && !status.nfqueue && !status.partial)
+            this.runtimeState = 'STOPPED';
+        else
+            this.runtimeState = 'ERROR';
+        this.updateStateBadge();
+    },
+
+    updateStateBadge: function() {
+        if (!this.stateBadge) return;
+        let state = this.jobState?.status == 'RUNNING' && this.jobState.mode != 'flowseal_update'
+            ? 'TESTING' : this.runtimeState;
+        this.stateBadge.className = this.badgeClass(state);
+        this.stateBadge.textContent = state;
     },
 
     canApply: function(id) {
@@ -59,6 +106,7 @@ return view.extend({
     updateActiveProfile: function(id) {
         let active = this.profiles.find(p => p.id == id);
         this.active.textContent = active ? active.name : (id || _('Manual / Settings'));
+        this.active.className = this.badgeClass('neutral');
     },
 
     updateProfiles: function(data) {
@@ -84,6 +132,20 @@ return view.extend({
         this.selectedProfileId = this.selector.value;
         this.renderResults();
         this.updateButtons();
+    },
+
+    updateProfileResult: function(id, result) {
+        let current = this.profiles.find(p => p.id == id);
+        if (!current) return;
+
+        // Результат относится только к той версии профиля, которая уже загружена в UI.
+        let latest = result && result.profile_id == id &&
+            result.content_hash == current.content_hash &&
+            result.source_version == current.source_version ? result : null;
+
+        if (JSON.stringify(current.latest_result || null) == JSON.stringify(latest || null)) return;
+        current.latest_result = latest;
+        this.updateResultRow(current.id);
     },
 
     applySelected: async function(forcedId) {
@@ -117,17 +179,28 @@ return view.extend({
         if (!data?.ok) {
             this.flowsealRemote.textContent = _('Unavailable');
             this.flowsealSummary.textContent = data?.error || 'unknown_error';
+            this.flowsealSummary.className = this.badgeClass('ERROR');
             return;
         }
         this.flowsealLocal.textContent = data.local_version || _('Not installed');
         this.flowsealRemote.textContent = data.remote_version || _('Not checked');
-        if (data.update_available === true) this.flowsealSummary.textContent = _('Update available');
-        else if (data.update_available === false) this.flowsealSummary.textContent = _('Up to date');
+        if (data.update_available === true) {
+            this.flowsealSummary.textContent = _('Update available');
+            this.flowsealSummary.className = this.badgeClass('PARTIAL');
+        }
+        else if (data.update_available === false) {
+            this.flowsealSummary.textContent = _('Up to date');
+            this.flowsealSummary.className = this.badgeClass('PASS');
+        }
         else if (data.report?.counts) {
             let c = data.report.counts;
             this.flowsealSummary.textContent = _('Last import: +%d / changed %d / unsupported %d').format(Number(c.added || 0), Number(c.changed || 0), Number(c.unsupported || 0));
+            this.flowsealSummary.className = this.badgeClass('neutral');
         }
-        else this.flowsealSummary.textContent = _('Remote version has not been checked yet.');
+        else {
+            this.flowsealSummary.textContent = _('Not checked');
+            this.flowsealSummary.className = this.badgeClass('neutral');
+        }
     },
 
     checkFlowseal: async function(silent) {
@@ -159,7 +232,7 @@ return view.extend({
             else {
                 this.activeJob = result.job_id;
                 this.testing = true;
-                this.showJob({ job_id: result.job_id, mode: 'flowseal_update', status: result.status || 'PENDING', index: 0, total: 1, stage: 'queued' });
+                this.showJob({ job_id: result.job_id, mode: 'flowseal_update', status: result.status || 'PENDING', current: 0, total: 1, stage: 'queued' });
             }
         }
         catch (e) {
@@ -186,7 +259,7 @@ return view.extend({
             else {
                 this.activeJob = result.job_id;
                 this.testing = true;
-                this.showJob({ job_id: result.job_id, status: result.status || 'PENDING', index: 0, total: result.total || 1, stage: 'queued' });
+                this.showJob({ job_id: result.job_id, status: result.status || 'PENDING', current: 0, total: result.total || 1, stage: 'queued' });
             }
         }
         catch (e) {
@@ -222,45 +295,100 @@ return view.extend({
     },
 
     showJob: function(data) {
+        let previous = this.jobState?.status == 'RUNNING' && this.jobState.stage == 'testing'
+            ? (this.jobState.profile_id || this.jobState.current_profile) : null;
         if (!data?.job_id) {
-            this.jobText.textContent = _('No strategy test is running.');
+            this.jobState = null;
+            this.jobText.textContent = _('None');
+            this.jobProgressRow.hidden = true;
+            this.updateStateBadge();
+            if (previous) this.updateResultRow(previous);
             return;
         }
-        let index = Number(data.index || 0), total = Number(data.total || 0);
-        let current = data.current_profile ? ' — ' + this.profileLabel(data.current_profile) : '';
+        this.jobState = data;
+        let current = Number(data.current ?? data.index ?? 0), total = Number(data.total || 0);
+        let profileId = data.profile_id || data.current_profile;
+        let label = profileId ? ' — ' + this.profileLabel(profileId) : '';
+        let percent = total > 0 ? Math.min(100, Math.round(current * 100 / total)) : 0;
+        this.jobProgress.value = percent;
+        this.jobPercent.textContent = percent + '%';
+        this.jobProgressRow.hidden = this.isTerminal(data.status);
         if (data.mode == 'flowseal_update') {
             if (data.status == 'PENDING') this.jobText.textContent = _('Flowseal update queued');
             else if (data.status == 'RUNNING') this.jobText.textContent = _('Updating Flowseal strategies…');
             else this.jobText.textContent = _('Flowseal update: %s').format(data.status || 'UNKNOWN');
         }
         else if (data.status == 'RUNNING' && data.stage == 'testing')
-            this.jobText.textContent = _('Testing %d/%d').format(index, total) + current;
+            this.jobText.textContent = _('Testing %d / %d').format(current, total) + label;
         else if (data.status == 'PENDING')
             this.jobText.textContent = _('Queued') + (total > 0 ? ' · ' + total + ' ' + _('strategy tests') : '');
         else
-            this.jobText.textContent = (data.status || 'UNKNOWN') + (total > 0 ? ' ' + index + '/' + total : '') + current + ' [' + (data.stage || 'unknown') + ']';
+            this.jobText.textContent = (data.status || 'UNKNOWN') + (total > 0 ? ' ' + current + '/' + total : '') + label + ' [' + (data.stage || 'unknown') + ']';
+        this.updateStateBadge();
+        let testing = data.status == 'RUNNING' && data.stage == 'testing' ? profileId : null;
+        if (previous && previous != testing) this.updateResultRow(previous);
+        if (testing) this.updateResultRow(testing);
+    },
+
+    refreshRuntimeAndActive: async function() {
+        let [status, active] = await Promise.all([
+            getStatus().catch(() => null),
+            getActiveProfile().catch(() => null)
+        ]);
+        this.setRuntimeState(status);
+        if (active?.ok) this.updateActiveProfile(active.profile);
+    },
+
+    refreshIdle: async function(force) {
+        let now = Date.now();
+        if (!force && this.lastIdleRefresh && now - this.lastIdleRefresh < this.idleRefreshMs)
+            return;
+        this.lastIdleRefresh = now;
+        let [status, current, active] = await Promise.all([
+            getStatus().catch(() => null),
+            currentJob().catch(() => null),
+            getActiveProfile().catch(() => null)
+        ]);
+        this.setRuntimeState(status);
+        if (active?.ok) this.updateActiveProfile(active.profile);
+        if (current?.job_id) {
+            this.activeJob = current.job_id;
+            this.testing = !this.isTerminal(current.status);
+            this.showJob(current);
+        }
+        else if (current?.ok) {
+            this.showJob(null);
+            this.testing = false;
+        }
+        this.updateButtons();
     },
 
     refreshJob: async function() {
         try {
+            // В idle нет смысла будить backend каждые 2 секунды.
             if (!this.activeJob) {
-                let current = await currentJob();
-                if (current?.job_id) {
-                    this.activeJob = current.job_id;
-                    this.testing = !this.isTerminal(current.status);
-                    this.showJob(current);
-                    this.updateButtons();
-                }
-                else if (current?.ok) {
-                    let active = await getActiveProfile();
-                    if (active?.ok) this.updateActiveProfile(active.profile);
-                }
+                await this.refreshIdle(false);
                 return;
             }
+
+            // Во время job быстрый polling читает только состояние самого job.
             let state = await jobStatus(this.activeJob);
             if (!state?.ok) return;
+            let previousId = this.jobState?.profile_id || this.jobState?.current_profile;
+            let completedPrevious = state.mode != 'flowseal_update' && this.jobState?.stage == 'testing' && previousId &&
+                (previousId != (state.profile_id || state.current_profile) || this.isTerminal(state.status));
+
+            // Сначала двигаем progress/TESTING-строку, затем дочитываем маленький result JSON.
             this.showJob(state);
             this.testing = !this.isTerminal(state.status);
+            if (completedPrevious) {
+                try {
+                    let completed = await getProfileResult(previousId);
+                    if (completed?.ok) this.updateProfileResult(previousId, completed.result);
+                }
+                catch (e) { /* Следующий переход job повторит чтение результата. */ }
+            }
+
             if (!this.testing) {
                 let id = this.activeJob;
                 this.activeJob = null;
@@ -276,6 +404,7 @@ return view.extend({
                         ui.addNotification(null, E('p', _('Flowseal update failed: %s').format(result?.error || state.error || 'unknown_error')));
                     this.updateFlowsealInfo(await flowsealStatus());
                     this.checkFlowseal(true);
+                    this.updateProfiles(await listProfiles());
                 }
                 else {
                     if (result?.ok && result.status == 'ERROR')
@@ -283,7 +412,9 @@ return view.extend({
                     else if (result?.ok && result.status == 'RECOVERED')
                         ui.addNotification(null, E('p', _('The strategy test was interrupted; the previous configuration was recovered.')));
                 }
-                this.updateProfiles(await listProfiles());
+                // После завершения job один раз перечитываем реальное состояние runtime и active profile.
+                await this.refreshRuntimeAndActive();
+                this.lastIdleRefresh = Date.now();
             }
             this.updateButtons();
         }
@@ -291,11 +422,10 @@ return view.extend({
     },
 
     testCell: function(test) {
-        if (!test) return _('Not tested');
-        let text = test.status || 'UNKNOWN';
-        if (Number.isFinite(test.latency_ms)) text += ' · ' + test.latency_ms + ' ms';
-        if (test.transport) text += ' · ' + test.transport;
-        return text;
+        if (!test) return '—';
+        let detail = Number.isFinite(test.latency_ms) ? test.latency_ms + ' ms' : '';
+        if (test.transport) detail += (detail ? ' · ' : '') + test.transport;
+        return this.badge(test.status || _('Not tested'), detail);
     },
 
     setSort: function(key) {
@@ -304,9 +434,28 @@ return view.extend({
         this.renderResults();
     },
 
+    updateResultRow: function(id) {
+        let entry = this.resultRows?.[id];
+        let profile = this.profiles.find(p => p.id == id);
+        if (!entry || !profile) return;
+        let result = profile.latest_result;
+        let tests = result?.tests || {};
+        let isTesting = this.jobState?.status == 'RUNNING' && this.jobState.stage == 'testing' &&
+            (this.jobState.profile_id || this.jobState.current_profile) == id;
+        entry.row.className = isTesting ? 'owz-current-row' : '';
+        let status = isTesting ? 'TESTING' : (result?.status || _('Not tested'));
+        entry.result.replaceChildren(this.badge(status));
+        if (!isTesting && result?.reason)
+            entry.result.appendChild(E('small', { 'class': 'owz-result-reason', 'title': result.reason }, result.reason));
+        for (let name of ['youtube', 'discord', 'cloudflare', 'github'])
+            entry[name].replaceChildren(this.testCell(tests[name]));
+        entry.tested.textContent = result?.tested_at ? new Date(result.tested_at * 1000).toLocaleString() : '—';
+    },
+
     renderResults: function() {
         if (!this.resultsBody) return;
         this.resultsBody.replaceChildren();
+        this.resultRows = Object.create(null);
         this.rowApplyButtons = [];
         let profiles = Array.from(this.profiles);
         let key = this.sortKey, direction = this.sortAsc ? 1 : -1;
@@ -319,10 +468,6 @@ return view.extend({
             return direction * String(av).localeCompare(String(bv));
         });
         for (let profile of profiles) {
-            let result = profile.latest_result;
-            let tests = result?.tests || {};
-            let resultText = result?.status || _('Not tested');
-            if (result?.reason) resultText += ' — ' + result.reason;
             let apply = E('button', {
                 'class': 'btn cbi-button-apply',
                 'disabled': profile.compatible !== true || this.testing,
@@ -330,78 +475,84 @@ return view.extend({
             }, _('Apply'));
             apply.profileCompatible = profile.compatible === true;
             this.rowApplyButtons.push(apply);
-            this.resultsBody.appendChild(E('tr', [
-                E('td', profile.name),
-                E('td', resultText),
-                E('td', result?.tested_at ? new Date(result.tested_at * 1000).toLocaleString() : '—'),
-                E('td', this.testCell(tests.youtube)),
-                E('td', this.testCell(tests.discord)),
-                E('td', this.testCell(tests.cloudflare)),
-                E('td', this.testCell(tests.github)),
-                E('td', apply)
-            ]));
+            let entry = {
+                result: E('td'), youtube: E('td'), discord: E('td'),
+                cloudflare: E('td'), github: E('td'), tested: E('td')
+            };
+            entry.row = E('tr', {}, [
+                E('td', profile.name), entry.result, entry.youtube, entry.discord,
+                entry.cloudflare, entry.github, entry.tested, E('td', apply)
+            ]);
+            this.resultRows[profile.id] = entry;
+            this.resultsBody.appendChild(entry.row);
+            this.updateResultRow(profile.id);
         }
     },
 
     render: function(data) {
-        this.active = E('span');
+        this.active = this.badge(_('Manual / Settings'));
+        this.stateBadge = this.badge('ERROR');
         this.selector = E('select', { 'change': L.bind(this.selectProfile, this) });
         this.applyButton = E('button', { 'class': 'btn cbi-button-apply', 'click': L.bind(this.applySelected, this, null) }, _('Apply'));
         this.testButton = E('button', { 'class': 'btn cbi-button-action', 'click': L.bind(this.startTesting, this, false) }, _('Test Strategy'));
-        this.testAllButton = E('button', { 'class': 'btn cbi-button-action', 'click': L.bind(this.startTesting, this, true) }, _('Test All Strategies'));
-        this.cancelButton = E('button', { 'class': 'btn cbi-button-negative', 'click': L.bind(this.cancelTesting, this) }, _('Cancel Job'));
-        this.jobText = E('span', _('No background job is running.'));
+        this.testAllButton = E('button', { 'class': 'btn cbi-button-action', 'click': L.bind(this.startTesting, this, true) }, _('Test All'));
+        this.cancelButton = E('button', { 'class': 'btn cbi-button-negative', 'click': L.bind(this.cancelTesting, this) }, _('Cancel'));
+        this.jobText = E('span', _('None'));
+        this.jobProgress = E('progress', { 'max': 100, 'value': 0 });
+        this.jobPercent = E('span', '0%');
+        this.jobProgressRow = E('div', { 'class': 'owz-job-progress' }, [this.jobProgress, this.jobPercent, this.cancelButton]);
+        this.jobProgressRow.hidden = true;
         this.flowsealLocal = E('span', '—');
         this.flowsealRemote = E('span', '—');
-        this.flowsealSummary = E('span', '—');
+        this.flowsealSummary = this.badge(_('Not checked'));
         this.flowsealUpdateButton = E('button', { 'class': 'btn cbi-button-apply', 'click': L.bind(this.startFlowsealSync, this) }, _('Update Strategies'));
         this.resultsBody = E('tbody');
 
         let page = E('div', [
             E('h2', _('Strategies')),
             E('div', { 'class': 'cbi-section' }, [
-                E('div', { 'class': 'cbi-value' }, [
-                    E('label', { 'class': 'cbi-value-title' }, _('Active strategy')),
-                    E('div', { 'class': 'cbi-value-field' }, this.active)
+                E('div', { 'class': 'owz-status-line' }, [
+                    E('span', [ _('Active:'), ' ', this.active ]),
+                    E('span', [ _('State:'), ' ', this.stateBadge ])
                 ]),
                 E('div', { 'class': 'cbi-value' }, [
                     E('label', { 'class': 'cbi-value-title' }, _('Strategy')),
-                    E('div', { 'class': 'cbi-value-field', 'style': 'display:flex;flex-wrap:wrap;gap:.5rem' }, [
-                        this.selector, this.applyButton, this.testButton, this.testAllButton
-                    ])
+                    E('div', { 'class': 'cbi-value-field' }, this.selector)
                 ]),
+                E('div', { 'class': 'owz-actions' }, [this.applyButton, this.testButton, this.testAllButton]),
                 E('div', { 'class': 'cbi-value' }, [
-                    E('label', { 'class': 'cbi-value-title' }, _('Background job')),
-                    E('div', { 'class': 'cbi-value-field' }, [this.jobText, ' ', this.cancelButton])
+                    E('label', { 'class': 'cbi-value-title' }, _('Job')),
+                    E('div', { 'class': 'cbi-value-field' }, [this.jobText, this.jobProgressRow])
                 ]),
-                E('p', { 'class': 'cbi-value-description' }, _('Tests temporarily activate a strategy, check HTTPS reachability, and restore the previous configuration.'))
+                E('p', { 'class': 'cbi-value-description' }, _('Tests temporarily activate a strategy, check HTTPS from the router, and restore the previous configuration. LAN client traffic may differ.'))
             ]),
             E('div', { 'class': 'cbi-section' }, [
-                E('h3', _('Strategy updates')),
+                E('h3', _('Updates')),
                 E('div', { 'class': 'cbi-value' }, [
-                    E('label', { 'class': 'cbi-value-title' }, _('Local version')),
+                    E('label', { 'class': 'cbi-value-title' }, _('Local')),
                     E('div', { 'class': 'cbi-value-field' }, this.flowsealLocal)
                 ]),
                 E('div', { 'class': 'cbi-value' }, [
-                    E('label', { 'class': 'cbi-value-title' }, _('Remote stable version')),
+                    E('label', { 'class': 'cbi-value-title' }, _('Remote')),
                     E('div', { 'class': 'cbi-value-field' }, this.flowsealRemote)
                 ]),
                 E('div', { 'class': 'cbi-value' }, [
                     E('label', { 'class': 'cbi-value-title' }, _('Status')),
                     E('div', { 'class': 'cbi-value-field' }, this.flowsealSummary)
                 ]),
-                E('div', { 'style': 'display:flex;flex-wrap:wrap;gap:.5rem' }, [ this.flowsealUpdateButton ]),
+                E('div', { 'class': 'owz-actions' }, this.flowsealUpdateButton),
                 E('p', { 'class': 'cbi-value-description' }, _('Source: Flowseal. Strategy BAT files are imported as inert data and are never executed. Windows executables are never run, and updating never changes the active strategy automatically.'))
             ]),
             E('div', { 'class': 'cbi-section', 'style': 'overflow-x:auto' }, [
-                E('h3', _('Strategy test results')),
+                E('h3', _('Test results')),
                 E('table', { 'class': 'table' }, [
                     E('thead', {}, [ E('tr', {}, [
                         E('th', { 'style': 'cursor:pointer', 'click': L.bind(this.setSort, this, 'name'), 'title': _('Sort') }, _('Strategy')),
                         E('th', { 'style': 'cursor:pointer', 'click': L.bind(this.setSort, this, 'result'), 'title': _('Sort') }, _('Result')),
-                        E('th', { 'style': 'cursor:pointer', 'click': L.bind(this.setSort, this, 'tested'), 'title': _('Sort') }, _('Tested')),
                         E('th', {}, _('YouTube')), E('th', {}, _('Discord')),
-                        E('th', {}, _('Cloudflare')), E('th', {}, _('GitHub')), E('th', {}, _('Action'))
+                        E('th', {}, _('Cloudflare')), E('th', {}, _('GitHub')),
+                        E('th', { 'style': 'cursor:pointer', 'click': L.bind(this.setSort, this, 'tested'), 'title': _('Sort') }, _('Tested')),
+                        E('th', {}, _('Action'))
                     ]) ]),
                     this.resultsBody
                 ])
@@ -410,16 +561,25 @@ return view.extend({
 
         let profiles = data?.[0] || {};
         let job = data?.[1] || {};
-        let flowseal = data?.[2] || {};
+        this.setRuntimeState(data?.[2]);
         this.updateProfiles(profiles);
-        this.updateFlowsealInfo(flowseal);
         if (job?.job_id) {
             this.activeJob = job.job_id;
             this.testing = !this.isTerminal(job.status);
             this.showJob(job);
         }
         this.updateButtons();
-        if (!this.testing) this.checkFlowseal(true);
+        this.lastIdleRefresh = Date.now();
+
+        // Updates не блокируют первый render страницы.
+        flowsealStatus().then(status => {
+            this.updateFlowsealInfo(status);
+            if (!this.testing) this.checkFlowseal(true);
+        }).catch(() => {
+            this.updateFlowsealInfo({ ok: false, error: 'unavailable' });
+            if (!this.testing) this.checkFlowseal(true);
+        });
+
         poll.add(L.bind(this.refreshJob, this), 2);
         return page;
     },

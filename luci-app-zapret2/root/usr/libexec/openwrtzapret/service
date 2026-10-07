@@ -158,6 +158,11 @@ owz_lock() {
 		rmdir "$stale" 2>/dev/null
 		mkdir "$OWZ_LOCK" 2>/dev/null || return 1
 	fi
+	# Journal закрывает промежуток между постановкой job и захватом lock его worker.
+	case "$action" in
+		job_start|job_run|job_recover) :;;
+		*) [ ! -e "$OWZ_JOURNAL/active" ] || { rmdir "$OWZ_LOCK" 2>/dev/null; return 1; };;
+	esac
 	if ! printf '%s %s %s\n' "$$" "$action" "$(date +%s)" > "$OWZ_LOCK/owner"; then
 		rm -f "$OWZ_LOCK/owner" 2>/dev/null
 		rmdir "$OWZ_LOCK" 2>/dev/null
@@ -404,8 +409,7 @@ owz_restore_snapshot() {
 	owz_profile_restore_pointer "$old_profile" || failed=true
 
 	if [ "$old_state" = RUNNING ]; then
-		# Return code отдельных init-команд может быть ненулевым даже при успешном переходе.
-		# Поэтому итог восстановления определяем по фактическому состоянию сервиса.
+		# Возвратный код init-команд не заменяет проверку фактического runtime.
 		owz_init start_daemons || :
 		owz_init start_fw || :
 		owz_wait_for RUNNING || failed=true
@@ -448,11 +452,6 @@ owz_apply_profile() {
 	[ -n "$failure" ] || { stage=start_daemons; owz_init start_daemons || failure=start_daemons_failed; }
 	[ -n "$failure" ] || { stage=start_firewall; owz_init start_fw || failure=start_firewall_failed; }
 	[ -n "$failure" ] || { stage=verify_running; owz_wait_for RUNNING || failure=postcondition_failed; }
-	if [ -z "$failure" ] && [ "$old_state" = STOPPED ]; then
-		stage=restore_stop_firewall; owz_init stop_fw || failure=restore_stop_firewall_failed
-		[ -n "$failure" ] || { stage=restore_stop_daemons; owz_init stop_daemons || failure=restore_stop_daemons_failed; }
-		[ -n "$failure" ] || { stage=restore_stopped; owz_wait_for STOPPED || failure=restore_stopped_failed; }
-	fi
 	if [ -z "$failure" ]; then
 		stage=commit_profile
 		uci -q set "zapret2.config.active_profile=$id" && uci -q commit zapret2 || failure=profile_commit_failed
@@ -460,10 +459,10 @@ owz_apply_profile() {
 	if [ -z "$failure" ]; then
 		stage=verify_committed
 		owz_status >/dev/null
-		[ "$OWZ_STATE" = "$old_state" ] || failure=postcommit_state_failed
+		[ "$OWZ_STATE" = RUNNING ] || failure=postcommit_state_failed
 	fi
 	if [ -n "$failure" ]; then
-		owz_restore_snapshot "$backup" "$old_profile" "$old_state" && rolled=true
+		owz_restore_snapshot "$backup" "$old_profile" RUNNING && rolled=true
 	fi
 	rm -f "$backup/config"; rmdir "$backup" 2>/dev/null
 	if [ -n "$failure" ]; then owz_profile_result false "$id" "$stage" "$rolled" "$failure"
@@ -538,14 +537,14 @@ owz_job_active_id() {
 }
 
 owz_job_state_write() {
-	local dir="$1" job="$2" mode="$3" status="$4" stage="$5" current="$6" index="$7" total="$8" error="$9" tmp
+	local dir="$1" job="$2" mode="$3" status="$4" stage="$5" profile_id="$6" current="$7" total="$8" error="$9" tmp
 	tmp="$dir/state.json.tmp.$$"
-	[ -n "$current" ] || current=null
-	[ "$current" = null ] || current="\"$current\""
+	[ -n "$profile_id" ] || profile_id=null
+	[ "$profile_id" = null ] || profile_id="\"$profile_id\""
 	[ -n "$error" ] || error=null
 	[ "$error" = null ] || error="\"$error\""
-	printf '{"ok":true,"job_id":"%s","mode":"%s","status":"%s","stage":"%s","current_profile":%s,"index":%s,"total":%s,"error":%s}\n' \
-		"$job" "$mode" "$status" "$stage" "$current" "$index" "$total" "$error" > "$tmp" && mv -f "$tmp" "$dir/state.json"
+	printf '{"ok":true,"job_id":"%s","mode":"%s","status":"%s","stage":"%s","profile_id":%s,"current":%s,"total":%s,"error":%s}\n' \
+		"$job" "$mode" "$status" "$stage" "$profile_id" "$current" "$total" "$error" > "$tmp" && mv -f "$tmp" "$dir/state.json"
 }
 
 owz_job_meta_get() {
@@ -571,13 +570,22 @@ owz_profile_ids() {
 }
 
 owz_profile_list() {
-	local id first=true
-	printf '{"ok":true,"ids":['
+	local id first=true active_profile
+	active_profile=$(uci -q get zapret2.config.active_profile 2>/dev/null) || active_profile=''
+	case "$active_profile" in
+		'') :;;
+		builtin-*|flowseal-*|user-*) case "$active_profile" in *[!a-z0-9_-]*) printf '%s\n' '{"ok":false,"error":"invalid_active_profile"}'; return 0;; esac;;
+		*) printf '%s\n' '{"ok":false,"error":"invalid_active_profile"}'; return 0;;
+	esac
+	printf '{"ok":true,"profiles":['
 	owz_profile_ids | while IFS= read -r id; do
+		owz_profile_load "$id" || continue
 		if [ "$first" = true ]; then first=false; else printf ','; fi
-		printf '"%s"' "$id"
+		cat "$OWZ_PROFILE_FILE" || continue
 	done
-	printf ']}\n'
+	printf '],"active_profile":'
+	if [ -n "$active_profile" ]; then printf '"%s"' "$active_profile"; else printf 'null'; fi
+	printf '}\n'
 }
 
 owz_profile_get() {
@@ -596,32 +604,34 @@ owz_list_compatible_profiles() {
 	done
 }
 
+owz_job_stop_runtime() {
+	owz_status >/dev/null
+	if [ "$OWZ_DAEMON" = true ] || [ "$OWZ_FIREWALL" = true ] || [ "$OWZ_QUEUE_RULE" = true ]; then
+		owz_init stop_fw || :
+		owz_init stop_daemons || :
+	fi
+	owz_wait_for STOPPED
+}
+
 owz_job_snapshot_restore() {
-	local dir="$1" meta old_profile old_state failed=false
+	local dir="$1" meta old_profile old_state
 	meta="$dir/snapshot/meta"
 	[ -r "$meta" ] && [ -r "$dir/snapshot/config" ] || return 1
 	old_profile=$(owz_job_meta_get "$meta" old_profile)
 	old_state=$(owz_job_meta_get "$meta" old_state)
 	case "$old_profile" in ''|builtin-[a-z0-9]*|flowseal-[a-z0-9]*|user-[a-z0-9]*) :;; *) return 1;; esac
 	case "$old_state" in RUNNING|STOPPED) :;; *) return 1;; esac
-	owz_status >/dev/null
-	if [ "$OWZ_DAEMON" = true ] || [ "$OWZ_FIREWALL" = true ] || [ "$OWZ_QUEUE_RULE" = true ]; then
-		# Не считаем промежуточный return code ошибкой сам по себе:
-		# решающим является достижение состояния STOPPED.
-		owz_init stop_fw || :
-		owz_init stop_daemons || :
-		owz_wait_for STOPPED || failed=true
-	fi
-	cp -p "$dir/snapshot/config" /opt/zapret2/config || failed=true
-	owz_profile_restore_pointer "$old_profile" || failed=true
+	# Не запускаем исходный runtime, пока кандидат не остановлен полностью.
+	owz_job_stop_runtime || return 1
+	cp -p "$dir/snapshot/config" /opt/zapret2/config || return 1
+	owz_profile_restore_pointer "$old_profile" || return 1
 	if [ "$old_state" = RUNNING ]; then
 		owz_init start_daemons || :
 		owz_init start_fw || :
-		owz_wait_for RUNNING || failed=true
+		owz_wait_for RUNNING
 	else
-		owz_wait_for STOPPED || failed=true
+		owz_wait_for STOPPED
 	fi
-	[ "$failed" = false ]
 }
 
 owz_probe_http() {
@@ -630,7 +640,8 @@ owz_probe_http() {
 		printf '%s' '{"status":"FAIL","latency_ms":null,"http_code":0,"detail":"curl_missing"}'
 		return 1
 	fi
-	out=$(curl -L -sS -o /dev/null -w '%{http_code} %{time_total}' --connect-timeout 4 --max-time 8 "$url" 2>/dev/null); rc=$?
+	# Прокси перенаправил бы запрос мимо проверяемого направления к сайту.
+	out=$(curl --noproxy '*' -L -sS -o /dev/null -w '%{http_code} %{time_total}' --connect-timeout 4 --max-time 8 "$url" 2>/dev/null); rc=$?
 	if [ "$rc" -ne 0 ]; then
 		printf '%s' '{"status":"FAIL","latency_ms":null,"http_code":0,"detail":"transport_failed"}'
 		return 1
@@ -724,7 +735,7 @@ owz_job_build_result() {
 }
 
 owz_job_test_one() {
-	local dir="$1" id="$2" stage=validation failure='' restored=false name="$2" hash=invalid version=unknown tests status reason
+	local dir="$1" id="$2" stage=validation failure='' name="$2" hash=invalid version=unknown tests status reason
 	if owz_profile_load "$id"; then
 		name=$OWZ_PROFILE_NAME; hash=$OWZ_PROFILE_HASH; version=$OWZ_PROFILE_VERSION
 	else
@@ -732,14 +743,9 @@ owz_job_test_one() {
 	fi
 	[ -n "$failure" ] || [ "$OWZ_PROFILE_COMPATIBLE" = true ] || failure=incompatible_profile
 	[ -n "$failure" ] || owz_profile_requirements_ready || failure=missing_requirements
-	if [ -z "$failure" ]; then
-		owz_status >/dev/null
-		if [ "$OWZ_STATE" = RUNNING ]; then
-			stage=stop_firewall; owz_init stop_fw || failure=stop_firewall_failed
-			[ -n "$failure" ] || { stage=stop_daemons; owz_init stop_daemons || failure=stop_daemons_failed; }
-			[ -n "$failure" ] || { stage=verify_stopped; owz_wait_for STOPPED || failure=stop_postcondition_failed; }
-		elif [ "$OWZ_STATE" != STOPPED ]; then failure=unsafe_runtime_state; fi
-	fi
+	# Каждый кандидат строится из одного исходного config, а не из overlay предшественника.
+	[ -n "$failure" ] || { stage=verify_stopped; owz_wait_for STOPPED || failure=unsafe_runtime_state; }
+	[ -n "$failure" ] || { stage=restore_baseline; cp -p "$dir/snapshot/config" /opt/zapret2/config || failure=baseline_restore_failed; }
 	[ -n "$failure" ] || { stage=sync; owz_sync skip_active || failure=sync_failed; }
 	[ -n "$failure" ] || { stage=write_config; owz_profile_overlay "$id" || failure=profile_config_failed; }
 	[ -n "$failure" ] || { stage=start_daemons; owz_init start_daemons || failure=start_daemons_failed; }
@@ -757,13 +763,28 @@ owz_job_test_one() {
 		if [ "$failure" = missing_requirements ] && [ -n "$OWZ_MISSING_REQUIREMENT" ]; then reason="missing requirement: $OWZ_MISSING_REQUIREMENT"; fi
 		tests='{"youtube":{"status":"SKIP"},"discord":{"status":"SKIP"},"cloudflare":{"status":"SKIP"},"github":{"status":"SKIP"}}'
 	fi
-	if owz_job_snapshot_restore "$dir"; then restored=true; else restored=false; fi
-	if [ "$restored" != true ]; then
-		owz_profile_result_write "$dir" "$id" "$name" "$hash" "$version" ERROR "$tests" false recovery_failed || :
+	# Кандидат полностью останавливается до перехода к следующему профилю.
+	if ! owz_job_stop_runtime; then
+		owz_profile_result_write "$dir" "$id" "$name" "$hash" "$version" ERROR "$tests" false candidate_stop_failed || return 2
+		printf '%s\n' "$id" >> "$dir/completed"
 		return 2
 	fi
-	owz_profile_result_write "$dir" "$id" "$name" "$hash" "$version" "$status" "$tests" true "$reason" || return 1
+	owz_profile_result_write "$dir" "$id" "$name" "$hash" "$version" "$status" "$tests" false "$reason" || return 1
 	printf '%s\n' "$id" >> "$dir/completed"
+	return 0
+}
+
+owz_job_mark_restored() {
+	local dir="$1" id file tmp cache
+	[ -r "$dir/completed" ] || return 1
+	while IFS= read -r id; do
+		case "$id" in builtin-*|flowseal-*|user-*) case "$id" in *[!a-z0-9_-]*) return 1;; esac;; *) return 1;; esac
+		file="$dir/results/$id.json"; [ -r "$file" ] || return 1
+		tmp="$file.tmp.$$"
+		sed 's/"restored":false/"restored":true/' "$file" > "$tmp" && mv -f "$tmp" "$file" || return 1
+		cache="$OWZ_RESULT_ROOT/$id.json.tmp.$$"
+		cp "$file" "$cache" && chmod 600 "$cache" && mv -f "$cache" "$OWZ_RESULT_ROOT/$id.json" || return 1
+	done < "$dir/completed"
 	return 0
 }
 
@@ -896,19 +917,25 @@ owz_job_run() {
 
 	total=$(awk 'NF{n++} END{print n+0}' "$dir/profiles")
 	owz_job_state_write "$dir" "$job" "$mode" RUNNING prepare '' 0 "$total" ''
-	while IFS= read -r id; do
-		[ -n "$id" ] || continue
-		if [ -e "$dir/cancel" ]; then final=CANCELLED; final_error=cancelled; break; fi
-		index=$((index + 1))
-		owz_job_state_write "$dir" "$job" "$mode" RUNNING testing "$id" "$index" "$total" ''
-		owz_job_test_one "$dir" "$id"; rc=$?
-		if [ "$rc" -eq 2 ]; then final=ERROR; final_error=recovery_failed; break
-		elif [ "$rc" -ne 0 ]; then final=ERROR; final_error=result_write_failed; break; fi
-		if [ -e "$dir/cancel" ]; then final=CANCELLED; final_error=cancelled; break; fi
-	done < "$dir/profiles"
-	if [ "$final" != ERROR ]; then
-		if ! owz_job_snapshot_restore "$dir"; then final=ERROR; final_error=recovery_failed; fi
+	# Исходная стратегия останавливается один раз на весь job.
+	if owz_job_stop_runtime; then
+		while IFS= read -r id; do
+			[ -n "$id" ] || continue
+			if [ -e "$dir/cancel" ]; then final=CANCELLED; final_error=cancelled; break; fi
+			index=$((index + 1))
+			owz_job_state_write "$dir" "$job" "$mode" RUNNING testing "$id" "$index" "$total" ''
+			owz_job_test_one "$dir" "$id"; rc=$?
+			if [ "$rc" -eq 2 ]; then final=ERROR; final_error=candidate_stop_failed; break
+			elif [ "$rc" -ne 0 ]; then final=ERROR; final_error=result_write_failed; break; fi
+			if [ -e "$dir/cancel" ]; then final=CANCELLED; final_error=cancelled; break; fi
+		done < "$dir/profiles"
+	else
+		final=ERROR; final_error=original_stop_failed
 	fi
+	# При DONE, CANCELLED и ERROR восстанавливаем snapshot один раз.
+	owz_job_state_write "$dir" "$job" "$mode" RUNNING restoring '' "$index" "$total" ''
+	if ! owz_job_snapshot_restore "$dir"; then final=ERROR; final_error=recovery_failed
+	elif ! owz_job_mark_restored "$dir"; then final=ERROR; final_error=result_write_failed; fi
 	if [ "$final" = ERROR ] && [ "$final_error" = recovery_failed ]; then
 		owz_job_state_write "$dir" "$job" "$mode" ERROR recovery_failed '' "$index" "$total" "$final_error"
 		owz_job_build_result "$dir" "$job" "$mode" ERROR "$final_error" || :
@@ -942,6 +969,7 @@ owz_job_recover() {
 ' '{"ok":false,"error":"invalid_job_mode"}'; return 0;; esac
 	total=$(awk 'NF{n++} END{print n+0}' "$dir/profiles" 2>/dev/null)
 	if owz_job_snapshot_restore "$dir"; then
+		owz_job_mark_restored "$dir" || :
 		owz_job_state_write "$dir" "$job" "$mode" RECOVERED recovered '' 0 "$total" worker_lost
 		owz_job_build_result "$dir" "$job" "$mode" RECOVERED worker_lost || :
 		[ "$(owz_job_active_id 2>/dev/null)" = "$job" ] && rm -f "$OWZ_JOURNAL/active"
