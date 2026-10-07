@@ -92,6 +92,7 @@ function listProfiles() {
 return {
 	'openwrtzapret': {
 		status:  { call: function() { return invoke('status'); } },
+		profile_active: { call: function() { return invoke('profile_active'); } },
 		start:   { call: function() { return invoke('start'); } },
 		stop:    { call: function() { return invoke('stop'); } },
 		restart: { call: function() { return invoke('restart'); } },
