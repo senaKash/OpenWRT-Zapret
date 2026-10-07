@@ -95,7 +95,7 @@ return {
 		list_profiles: { call: function() { return listProfiles(); } },
 		get_profile: { args: { id: 'string' }, call: function(request) { return getProfile(request.args.id); } },
 		get_profile_result: { args: { id: 'string' }, call: function(request) { return getProfileResult(request.args.id); } },
-		set_profile_lock: { args: { id: 'string', locked: 'bool' }, call: function(request) {
+		set_profile_lock: { args: { id: 'string', locked: true }, call: function(request) {
 			if (!validId(request.args.id)) return { ok: false, error: 'invalid_profile_id' };
 			return invoke(request.args.locked ? 'profile_lock' : 'profile_unlock', request.args.id);
 		} },

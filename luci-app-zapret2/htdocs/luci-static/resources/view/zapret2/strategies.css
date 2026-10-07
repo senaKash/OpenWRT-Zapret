@@ -27,6 +27,20 @@
 .owz-badge-testing { color: #2869a3; background: rgba(40, 105, 163, .08); }
 .owz-badge-neutral { color: #555; background: rgba(85, 85, 85, .06); }
 
+.owz-top-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(18rem, .9fr);
+    gap: 1rem;
+    align-items: start;
+    margin-bottom: .6rem;
+}
+
+.owz-top-layout > .cbi-section { min-width: 0; margin-bottom: 0; }
+
+@media (max-width: 800px) {
+    .owz-top-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
 
 /* Test results: keep the native LuCI look, but make the data read as a table. */
 .owz-results-wrap {
@@ -45,12 +59,13 @@
     border-spacing: 0;
 }
 
-.owz-results-table .owz-col-index    { width: 3.5rem; }
-.owz-results-table .owz-col-strategy { width: 25%; }
-.owz-results-table .owz-col-result   { width: 18%; }
+.owz-results-table .owz-col-index    { width: 32px; }
+.owz-results-table .owz-col-lock     { width: 28px; }
+.owz-results-table .owz-col-strategy { width: 24%; }
+.owz-results-table .owz-col-result   { width: 16%; }
 .owz-results-table .owz-col-probe    { width: 8%; }
-.owz-results-table .owz-col-tested   { width: 15%; }
-.owz-results-table .owz-col-action   { width: 10%; }
+.owz-results-table .owz-col-tested   { width: 9rem; }
+.owz-results-table .owz-col-action   { width: 3rem; }
 
 .owz-results-table thead th {
     padding: .6rem .65rem;
@@ -88,6 +103,11 @@
     background: rgba(127, 127, 127, .055);
 }
 
+.owz-results-table .owz-active-strategy > td,
+.owz-results-table .owz-active-strategy:hover > td {
+    background: rgba(40, 105, 163, .055);
+}
+
 .owz-results-table .owz-current-row > td,
 .owz-results-table .owz-current-row:hover > td {
     background: rgba(40, 105, 163, .10);
@@ -100,11 +120,22 @@
     white-space: nowrap;
 }
 
+.owz-lock-cell,
 .owz-probe-cell,
 .owz-action-cell {
     text-align: center;
     white-space: nowrap;
 }
+
+.owz-results-table th.owz-index-cell,
+.owz-results-table td.owz-index-cell,
+.owz-results-table th.owz-lock-cell,
+.owz-results-table td.owz-lock-cell {
+    padding-left: .1rem;
+    padding-right: .1rem;
+}
+
+.owz-results-table th.owz-lock-cell { font-size: .72em; }
 
 .owz-result-cell {
     overflow: hidden;
@@ -134,13 +165,15 @@
 
 .owz-section-heading {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 1rem;
+    width: 100%;
 }
 
 .owz-section-heading h3 { margin-right: auto; }
-.owz-import-link { white-space: nowrap; font-size: .92em; }
+.owz-import-link { white-space: nowrap; font-size: 1.02em; font-weight: 600; text-decoration: underline; }
 
 .owz-index-cell {
     text-align: center !important;
@@ -148,30 +181,32 @@
     opacity: .72;
 }
 
-.owz-strategy-cell {
-    display: table-cell;
-}
-
-.owz-strategy-name {
-    display: inline-block;
-    max-width: calc(100% - 2.2rem);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    vertical-align: middle;
-}
-
 .owz-icon-button {
-    min-width: 2rem;
+    box-sizing: border-box;
+    width: 26px;
+    min-width: 26px;
+    height: 26px;
     margin: 0 !important;
-    padding: .18rem .42rem;
-    line-height: 1.2;
+    padding: 0;
+    line-height: 1;
     vertical-align: middle;
 }
 
 .owz-lock-button {
-    margin-left: .35rem !important;
+    width: 22px;
+    min-width: 22px;
+    height: 22px;
+    font-size: 13px;
     border-color: transparent;
     background: transparent;
 }
 
-.owz-action-cell .btn + .btn { margin-left: .35rem !important; }
+.owz-delete-button {
+    font-size: 14px;
+    color: #b43a32;
+    border: 1px solid currentColor;
+    background: rgba(180, 58, 50, .10);
+}
+
+.owz-delete-button:hover:not(:disabled) { background: rgba(180, 58, 50, .22); }
+.owz-delete-button:disabled { opacity: .45; }

@@ -62,8 +62,15 @@ assert.equal(methods.get_profile_result.call({ args: { id: '../bad' } }).error, 
 assert.equal(commands.length, beforeResult);
 
 reply = '{"ok":true,"profile":"builtin-default","locked":true}';
+assert.equal(methods.set_profile_lock.args.id, 'string');
+assert.equal(methods.set_profile_lock.args.locked, true);
+const beforeLock = commands.length;
 assert.equal(methods.set_profile_lock.call({ args: { id: 'builtin-default', locked: true } }).locked, true);
+assert.equal(commands.length, beforeLock + 1);
 assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'profile_lock', 'builtin-default']);
+reply = '{"ok":true,"profile":"builtin-default","locked":false}';
+assert.equal(methods.set_profile_lock.call({ args: { id: 'builtin-default', locked: false } }).locked, false);
+assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'profile_unlock', 'builtin-default']);
 reply = '{"ok":true,"profile":"builtin-default"}';
 assert.equal(methods.delete_profile.call({ args: { id: 'builtin-default' } }).ok, true);
 assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'profile_delete', 'builtin-default']);

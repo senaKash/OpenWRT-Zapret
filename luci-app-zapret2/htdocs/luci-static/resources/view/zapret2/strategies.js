@@ -102,17 +102,19 @@ return view.extend({
         if (this.testAllButton) this.testAllButton.disabled = locked || !this.profiles.some(p => p.compatible === true);
         if (this.cancelButton) this.cancelButton.disabled = !this.testing || !this.activeJob;
         if (this.flowsealUpdateButton) this.flowsealUpdateButton.disabled = locked;
-        for (let button of (this.rowApplyButtons || [])) button.disabled = locked || button.profileCompatible !== true;
         for (let button of (this.rowLockButtons || [])) button.disabled = locked;
         for (let button of (this.rowDeleteButtons || []))
             button.disabled = locked || button.profileLocked === true || button.profileId == this.activeProfileId;
     },
 
     updateActiveProfile: function(id) {
+        let previousId = this.activeProfileId;
         this.activeProfileId = id || null;
         let active = this.profiles.find(p => p.id == id);
         this.active.textContent = active ? active.name : (id || _('Manual / Settings'));
         this.active.className = this.badgeClass('neutral');
+        if (previousId && previousId != id) this.updateResultRow(previousId);
+        if (id) this.updateResultRow(id);
     },
 
     updateProfiles: function(data) {
@@ -183,13 +185,24 @@ return view.extend({
     toggleProfileLock: async function(id) {
         let profile = this.profiles.find(p => p.id == id);
         if (!profile || this.busy || this.testing) return;
+        let newState = profile.locked !== true;
         this.busy = true;
         this.updateButtons();
         try {
-            let result = await setProfileLock(id, profile.locked !== true);
-            if (!result?.ok)
-                ui.addNotification(null, E('p', _('Unable to change strategy lock: %s').format(result?.error || 'unknown_error')));
-            this.updateProfiles(await listProfiles());
+            let result = await setProfileLock(id, newState);
+            if (!result?.ok || result.profile != id || result.locked !== newState) {
+                ui.addNotification(null, E('p', _('Unable to change strategy lock: %s').format(result?.error || 'invalid_backend_response')));
+            }
+            else {
+                profile.locked = newState;
+                let entry = this.resultRows?.[id];
+                if (entry) {
+                    entry.lock.textContent = newState ? '🔒' : '🔓';
+                    entry.lock.title = newState ? _('Strategy locked') : _('Strategy unlocked');
+                    entry.lock.setAttribute('aria-label', newState ? _('Unlock strategy') : _('Lock strategy'));
+                    entry.remove.profileLocked = newState;
+                }
+            }
         }
         catch (e) {
             ui.addNotification(null, E('p', _('Unable to change strategy lock: %s').format(e.message || e)));
@@ -208,10 +221,12 @@ return view.extend({
         this.updateButtons();
         try {
             let result = await deleteProfile(id);
-            if (!result?.ok)
-                ui.addNotification(null, E('p', _('Unable to delete strategy: %s').format(result?.error || 'unknown_error')));
-            else
-                this.updateProfiles(await listProfiles());
+            if (!result?.ok || result.profile != id)
+                ui.addNotification(null, E('p', _('Unable to delete strategy: %s').format(result?.error || 'invalid_backend_response')));
+            else {
+                this.profiles = this.profiles.filter(p => p.id != id);
+                this.updateProfiles({ ok: true, profiles: this.profiles, active_profile: this.activeProfileId });
+            }
         }
         catch (e) {
             ui.addNotification(null, E('p', _('Unable to delete strategy: %s').format(e.message || e)));
@@ -487,7 +502,10 @@ return view.extend({
         let tests = result?.tests || {};
         let isTesting = this.jobState?.status == 'RUNNING' && this.jobState.stage == 'testing' &&
             (this.jobState.profile_id || this.jobState.current_profile) == id;
-        entry.row.className = isTesting ? 'owz-current-row' : '';
+        entry.row.className = [
+            id == this.activeProfileId ? 'owz-active-strategy' : '',
+            isTesting ? 'owz-current-row' : ''
+        ].filter(Boolean).join(' ');
         let status = isTesting ? 'TESTING' : (result?.status || _('Not tested'));
         entry.result.replaceChildren(this.badge(status));
         if (!isTesting && result?.reason)
@@ -501,7 +519,6 @@ return view.extend({
         if (!this.resultsBody) return;
         this.resultsBody.replaceChildren();
         this.resultRows = Object.create(null);
-        this.rowApplyButtons = [];
         this.rowLockButtons = [];
         this.rowDeleteButtons = [];
         let profiles = Array.from(this.profiles);
@@ -516,16 +533,9 @@ return view.extend({
         });
         for (let index = 0; index < profiles.length; index++) {
             let profile = profiles[index];
-            let apply = E('button', {
-                'class': 'btn cbi-button-apply',
-                'disabled': profile.compatible !== true || this.testing,
-                'click': L.bind(this.applySelected, this, profile.id)
-            }, _('Apply'));
-            apply.profileCompatible = profile.compatible === true;
-            this.rowApplyButtons.push(apply);
             let lock = E('button', {
                 'class': 'btn owz-icon-button owz-lock-button',
-                'title': profile.locked === true ? _('Unlock strategy') : _('Lock strategy'),
+                'title': profile.locked === true ? _('Strategy locked') : _('Strategy unlocked'),
                 'aria-label': profile.locked === true ? _('Unlock strategy') : _('Lock strategy'),
                 'click': L.bind(this.toggleProfileLock, this, profile.id)
             }, profile.locked === true ? '🔒' : '🔓');
@@ -542,6 +552,7 @@ return view.extend({
             remove.profileLocked = profile.locked === true;
             this.rowDeleteButtons.push(remove);
             let entry = {
+                lock: lock, remove: remove,
                 result: E('td', { 'class': 'owz-result-cell' }),
                 youtube: E('td', { 'class': 'owz-probe-cell' }),
                 discord: E('td', { 'class': 'owz-probe-cell' }),
@@ -551,12 +562,11 @@ return view.extend({
             };
             entry.row = E('tr', {}, [
                 E('td', { 'class': 'owz-index-cell' }, String(index + 1)),
-                E('td', { 'class': 'owz-strategy-cell', 'title': profile.name }, [
-                    E('span', { 'class': 'owz-strategy-name' }, profile.name), lock
-                ]),
+                E('td', { 'class': 'owz-lock-cell' }, lock),
+                E('td', { 'class': 'owz-strategy-cell', 'title': profile.name }, profile.name),
                 entry.result, entry.youtube, entry.discord,
                 entry.cloudflare, entry.github, entry.tested,
-                E('td', { 'class': 'owz-action-cell' }, [apply, remove])
+                E('td', { 'class': 'owz-action-cell' }, remove)
             ]);
             this.resultRows[profile.id] = entry;
             this.resultsBody.appendChild(entry.row);
@@ -585,7 +595,8 @@ return view.extend({
 
         let page = E('div', [
             E('h2', _('Strategies')),
-            E('div', { 'class': 'cbi-section' }, [
+            E('div', { 'class': 'owz-top-layout' }, [
+            E('div', { 'class': 'cbi-section owz-control-section' }, [
                 E('div', { 'class': 'owz-status-line' }, [
                     E('span', [ _('Active:'), ' ', this.active ]),
                     E('span', [ _('State:'), ' ', this.stateBadge ])
@@ -601,7 +612,7 @@ return view.extend({
                 ]),
                 E('p', { 'class': 'cbi-value-description' }, _('Tests temporarily activate a strategy, check HTTPS from the router, and restore the previous configuration. LAN client traffic may differ.'))
             ]),
-            E('div', { 'class': 'cbi-section' }, [
+            E('div', { 'class': 'cbi-section owz-updates-section' }, [
                 E('div', { 'class': 'owz-section-heading' }, [
                     E('h3', _('Updates')),
                     E('a', { 'href': L.url('admin/services/zapret2/import'), 'class': 'owz-import-link' }, _('Import your strategy'))
@@ -620,6 +631,7 @@ return view.extend({
                 ]),
                 E('div', { 'class': 'owz-actions' }, [this.flowsealUpdateButton, this.testAllButton]),
                 E('p', { 'class': 'cbi-value-description' }, _('Source: Flowseal. Strategy BAT files are imported as inert data and are never executed. Windows executables are never run, and updating never changes the active strategy automatically.'))
+            ])
             ]),
             E('div', { 'class': 'cbi-section' }, [
                 E('h3', _('Test results')),
@@ -627,6 +639,7 @@ return view.extend({
                     E('table', { 'class': 'table owz-results-table' }, [
                         E('colgroup', {}, [
                             E('col', { 'class': 'owz-col-index' }),
+                            E('col', { 'class': 'owz-col-lock' }),
                             E('col', { 'class': 'owz-col-strategy' }),
                             E('col', { 'class': 'owz-col-result' }),
                             E('col', { 'class': 'owz-col-probe' }),
@@ -638,12 +651,13 @@ return view.extend({
                         ]),
                         E('thead', {}, [ E('tr', {}, [
                             E('th', { 'class': 'owz-index-cell' }, '#'),
+                            E('th', { 'class': 'owz-lock-cell' }, _('Lock')),
                             E('th', { 'class': 'owz-sortable', 'click': L.bind(this.setSort, this, 'name'), 'title': _('Sort') }, _('Strategy')),
                             E('th', { 'class': 'owz-sortable', 'click': L.bind(this.setSort, this, 'result'), 'title': _('Sort') }, _('Result')),
-                            E('th', {}, _('YouTube')), E('th', {}, _('Discord')),
-                            E('th', {}, _('Cloudflare')), E('th', {}, _('GitHub')),
+                            E('th', { 'class': 'owz-probe-cell' }, _('YouTube')), E('th', { 'class': 'owz-probe-cell' }, _('Discord')),
+                            E('th', { 'class': 'owz-probe-cell' }, _('Cloudflare')), E('th', { 'class': 'owz-probe-cell' }, _('GitHub')),
                             E('th', { 'class': 'owz-sortable', 'click': L.bind(this.setSort, this, 'tested'), 'title': _('Sort') }, _('Tested')),
-                            E('th', {}, _('Action'))
+                            E('th', { 'class': 'owz-action-cell' }, _('Action'))
                         ]) ]),
                         this.resultsBody
                     ])

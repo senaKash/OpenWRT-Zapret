@@ -9,6 +9,9 @@ for (const method of ['list_profiles', 'get_profile_result', 'profile_active', '
 for (const method of ['apply_profile', 'set_manual', 'start_test', 'start_test_all', 'cancel_job', 'start_flowseal_update', 'set_profile_lock', 'delete_profile', 'import_user_strategy'])
     assert.ok(acl.write.ubus.openwrtzapret.includes(method), method);
 const calls = [];
+const declarations = {};
+const notifications = [];
+let lockFailure = false;
 const profiles = [
     { id: 'builtin-default', name: 'Zapret2 default', compatible: true },
     { id: 'flowseal-general-alt', name: 'general (ALT)', compatible: true, content_hash: 'sha256:alt', source_version: '1' },
@@ -23,24 +26,31 @@ const replies = {
     job_status: () => jobReply,
     job_result: () => ({ ok: true, status: 'DONE' }),
     get_profile_result: id => ({ ok: true, result: { profile_id: id, content_hash: 'sha256:alt', source_version: '1', status: 'PASS', tested_at: 1 } }),
+    set_profile_lock: (id, locked) => lockFailure ? { ok: false, error: 'busy' } : { ok: true, profile: id, locked },
+    delete_profile: id => ({ ok: true, profile: id }),
     profile_active: () => ({ ok: true, profile: 'builtin-default' }),
     start_test: id => ({ ok: true, job_id: '1-2', total: 1, status: 'PENDING' }),
     apply_profile: id => ({ ok: true })
 };
 const context = {
-    rpc: { declare: ({ method }) => (...args) => {
-        calls.push([method, ...args]);
-        return Promise.resolve(replies[method]?.(...args) || { ok: true });
+    rpc: { declare: spec => {
+        declarations[spec.method] = spec;
+        return (...args) => {
+            const { method } = spec;
+            calls.push([method, ...args]);
+            return Promise.resolve(replies[method]?.(...args) || { ok: true });
+        };
     } },
     view: { extend: value => value },
     _: value => value,
     E: (tag, attrs, text) => ({ tag, attrs, text }),
     L: { bind: (fn, receiver, ...args) => fn.bind(receiver, ...args), resource: path => path, url: path => path },
     document: { head: { appendChild() {} } },
-    ui: { addNotification: () => {} },
+    ui: { addNotification: (_title, node) => notifications.push(node) },
     poll: { add: () => {} }
 };
-const page = vm.runInNewContext(`(function(){${code}\n})()`, context);
+const page = vm.runInNewContext(`(function(){String.prototype.format = function(...args) { let i = 0; return this.replace(/%[ds]/g, () => String(args[i++])); }; ${code}\n})()`, context);
+assert.deepEqual(Array.from(declarations.set_profile_lock.params), ['id', 'locked']);
 page.selector = {
     options: [],
     _value: '',
@@ -122,5 +132,46 @@ page.showJob = () => {};
     await page.applySelected(null);
     assert.deepEqual(calls.find(call => call[0] === 'apply_profile'), ['apply_profile', 'flowseal-general-alt']);
     assert.equal(page.selector.value, 'flowseal-general-alt');
+
+    const profile = page.profiles.find(item => item.id === 'flowseal-general-alt');
+    profile.locked = false;
+    const lock = { textContent: '🔓', title: 'Strategy unlocked', setAttribute(name, value) { this[name] = value; } };
+    const remove = { profileId: profile.id, profileLocked: false, disabled: false };
+    page.resultRows = { [profile.id]: { lock, remove } };
+    page.rowLockButtons = [lock];
+    page.rowDeleteButtons = [remove];
+    const beforeLockList = calls.filter(call => call[0] === 'list_profiles').length;
+    const beforeLockCalls = calls.filter(call => call[0] === 'set_profile_lock').length;
+    await page.toggleProfileLock(profile.id);
+    assert.equal(calls.filter(call => call[0] === 'set_profile_lock').length, beforeLockCalls + 1);
+    assert.deepEqual(calls.at(-1), ['set_profile_lock', profile.id, true]);
+    assert.equal(calls.filter(call => call[0] === 'list_profiles').length, beforeLockList);
+    assert.equal(profile.locked, true);
+    assert.equal(lock.textContent, '🔒');
+    assert.equal(lock.title, 'Strategy locked');
+    assert.equal(remove.disabled, true);
+
+    const beforeDelete = calls.filter(call => call[0] === 'delete_profile').length;
+    await page.removeProfile(profile.id);
+    assert.equal(calls.filter(call => call[0] === 'delete_profile').length, beforeDelete);
+
+    lockFailure = true;
+    const beforeNotifications = notifications.length;
+    await page.toggleProfileLock(profile.id);
+    assert.equal(notifications.length, beforeNotifications + 1);
+    assert.equal(profile.locked, true);
+    assert.equal(lock.textContent, '🔒');
+    assert.equal(calls.filter(call => call[0] === 'list_profiles').length, beforeLockList);
+
+    lockFailure = false;
+    await page.toggleProfileLock(profile.id);
+    assert.equal(profile.locked, false);
+    assert.equal(lock.textContent, '🔓');
+    assert.equal(lock.title, 'Strategy unlocked');
+    assert.equal(remove.disabled, false);
+    await page.removeProfile(profile.id);
+    assert.equal(calls.filter(call => call[0] === 'delete_profile').length, beforeDelete + 1);
+    assert.equal(calls.filter(call => call[0] === 'list_profiles').length, beforeLockList);
+    assert.equal(page.profiles.some(item => item.id === profile.id), false);
     console.log('Strategies selection and RPC checks passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });
