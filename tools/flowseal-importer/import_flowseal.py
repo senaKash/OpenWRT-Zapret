@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Safe Flowseal BAT -> OpenWRTZapret profile converter.
-
-The BAT file is parsed as inert text. This tool never executes BAT/CMD/EXE/PS1
-content. Unknown options are reported and make the profile incompatible.
-"""
+"""Безопасное преобразование BAT Flowseal в профиль OpenWRTZapret."""
 from __future__ import annotations
 
 import argparse
@@ -25,30 +21,26 @@ GAME_FILTERS = {
     "udp": ("12", "1024-65535"),
 }
 
-PASS_OPTIONS = {
-    "filter-tcp", "filter-udp", "filter-l7", "hostlist-domains",
-    "hostlist", "hostlist-exclude", "ipset", "ipset-exclude",
-}
-
-KNOWN_OPTIONS = PASS_OPTIONS | {
-    "wf-tcp", "wf-udp", "ip-id", "dpi-desync", "dpi-desync-repeats",
-    "dpi-desync-fooling", "dpi-desync-fakedsplit-pattern",
-    "dpi-desync-split-pos", "dpi-desync-split-seqovl",
-    "dpi-desync-split-seqovl-pattern", "dpi-desync-any-protocol",
-    "dpi-desync-cutoff", "dpi-desync-fake-quic", "dpi-desync-fake-discord",
-    "dpi-desync-fake-stun", "dpi-desync-fake-tls", "dpi-desync-fake-http",
-    "dpi-desync-fake-unknown", "dpi-desync-fake-unknown-udp",
-}
-
-PATH_OPTIONS = {
-    "hostlist": "hostlists", "hostlist-exclude": "hostlists",
-    "ipset": "ipsets", "ipset-exclude": "ipsets",
-    "dpi-desync-fake-quic": "blobs", "dpi-desync-fake-discord": "blobs",
-    "dpi-desync-fake-stun": "blobs", "dpi-desync-fake-tls": "blobs",
-    "dpi-desync-fake-http": "blobs", "dpi-desync-fake-unknown": "blobs",
-    "dpi-desync-fake-unknown-udp": "blobs",
-    "dpi-desync-split-seqovl-pattern": "blobs",
-}
+# Одна таблица определяет переносимые, преобразуемые и файловые параметры.
+OPTION_CLASS = dict.fromkeys((
+    "filter-tcp", "filter-udp", "filter-l7", "filter-l3",
+    "hostlist-domains", "hostlist-exclude-domains",
+), "pass")
+OPTION_CLASS.update(dict.fromkeys(("hostlist", "hostlist-exclude"), "hostlists"))
+OPTION_CLASS.update(dict.fromkeys(("ipset", "ipset-exclude"), "ipsets"))
+OPTION_CLASS.update(dict.fromkeys((
+    "dpi-desync-fake-quic", "dpi-desync-fake-discord", "dpi-desync-fake-stun",
+    "dpi-desync-fake-tls", "dpi-desync-fake-http", "dpi-desync-fake-unknown",
+    "dpi-desync-fake-unknown-udp", "dpi-desync-split-seqovl-pattern",
+), "blobs"))
+OPTION_CLASS.update(dict.fromkeys(("wf-tcp", "wf-udp"), "global"))
+OPTION_CLASS.update(dict.fromkeys((
+    "ip-id", "dpi-desync", "dpi-desync-repeats", "dpi-desync-fooling",
+    "dpi-desync-fakedsplit-pattern", "dpi-desync-split-pos",
+    "dpi-desync-split-seqovl", "dpi-desync-any-protocol", "dpi-desync-cutoff",
+    "dpi-desync-fake-tls-mod", "dpi-desync-hostfakesplit-mod",
+    "dpi-desync-badseq-increment",
+), "translate"))
 
 @dataclass
 class Group:
@@ -88,8 +80,7 @@ def logical_lines(text: str) -> list[str]:
 
 
 def cmd_tokens(line: str) -> list[str]:
-    # Minimal cmd.exe-style tokenizer sufficient for Flowseal's quoted paths.
-    # Caret continuations are removed before this stage; quotes group whitespace.
+    # Кавычки группируют пробелы; ^! означает буквальный ! в BAT.
     tokens: list[str] = []
     buf: list[str] = []
     quoted = False
@@ -98,6 +89,9 @@ def cmd_tokens(line: str) -> list[str]:
         ch = line[i]
         if ch == '"':
             quoted = not quoted
+        elif ch == "^" and i + 1 < len(line) and line[i + 1] == "!":
+            buf.append("!")
+            i += 1
         elif ch.isspace() and not quoted:
             if buf:
                 tokens.append("".join(buf))
@@ -117,9 +111,14 @@ def extract_winws_args(text: str) -> list[str]:
         if "winws.exe" not in line.lower():
             continue
         toks = cmd_tokens(line)
+        if not toks or toks[0].lower() != "start":
+            die("unsupported BAT command before winws.exe")
         for i, tok in enumerate(toks):
-            if tok.lower().replace("\\", "/").endswith("winws.exe"):
+            if tok.lower().replace("\\", "/") == "%bin%winws.exe":
+                if i != 3 or toks[2].lower() != "/min":
+                    die("unsafe or unsupported winws invocation")
                 return toks[i + 1:]
+        die("unsafe or unsupported winws invocation")
     die("winws.exe command not found")
 
 
@@ -138,7 +137,7 @@ def resolve_vars(value: str, game_mode: str, runtime_root: str) -> str:
     for old, new in replacements.items():
         value = value.replace(old, new)
     # Any other CMD variable would make the translation ambiguous.
-    if re.search(r"%[^%]+%", value):
+    if "%" in value:
         die(f"unresolved variable: {value}")
     return value.replace("\\", "/")
 
@@ -168,8 +167,19 @@ def parse_options(args: list[str], game_mode: str, runtime_root: str) -> tuple[d
         except ValueError as exc:
             unsupported.append(str(exc))
             continue
-        if key not in KNOWN_OPTIONS:
-            unsupported.append(raw)
+        kind = OPTION_CLASS.get(key)
+        if kind is None:
+            unsupported.append(f"unsupported option:{key}")
+            continue
+        # Операторы и неизвестные подстановки CMD недопустимы в значении.
+        if re.search(r"[&|<>;`$^]", raw_value) or ("!" in raw_value and not (key == "dpi-desync-fake-tls" and raw_value == "!")):
+            unsupported.append(f"unsafe option value:{key}")
+            continue
+        if key == "filter-l3" and value not in {"ipv4", "ipv6"}:
+            unsupported.append(f"unsupported filter-l3:{value}")
+            continue
+        if key in {"hostlist-domains", "hostlist-exclude-domains"} and not re.fullmatch(r"[A-Za-z0-9.,-]+", value):
+            unsupported.append(f"invalid domains:{value}")
             continue
         if key in ("wf-tcp", "wf-udp"):
             global_opts[key] = value
@@ -216,11 +226,48 @@ def add_requirement(req: dict[str, list[str]], kind: str, value: str) -> None:
         req[kind].append(value)
 
 
-def fooling_args(value: str, unsupported: list[str]) -> list[str]:
+def blob_literal(key: str, value: str) -> str:
+    if re.fullmatch(r"0x(?:[0-9A-Fa-f]{2})+", value):
+        return value
+    if key == "dpi-desync-fake-tls" and value == "!":
+        return "fake_default_tls"
+    return ""
+
+
+def tls_mod(value: str, unsupported: list[str]) -> str:
+    if not value:
+        return ""
+    for part in split_csv(value):
+        if part not in {"none", "rnd", "rndsni", "dupsid", "padencap"} and not re.fullmatch(r"sni=[A-Za-z0-9.-]+", part):
+            unsupported.append(f"unsupported tls mod:{part}")
+            return ""
+    return value
+
+
+def host_mod(value: str, unsupported: list[str]) -> list[str]:
+    out: list[str] = []
+    for part in split_csv(value):
+        if part in {"none", "altorder=0"}:
+            continue
+        if part == "altorder=1":
+            unsupported.append("hostfakesplit altorder=1 has no equivalent in pinned nfqws2")
+        elif re.fullmatch(r"host=[A-Za-z0-9.-]+", part):
+            out.append(part)
+        else:
+            unsupported.append(f"unsupported hostfakesplit mod:{part}")
+    return out
+
+
+def fooling_args(value: str, badseq: str, unsupported: list[str]) -> list[str]:
     out: list[str] = []
     for item in split_csv(value):
         if item == "ts": out.append("tcp_ts=-600000")
-        elif item == "badseq": out.append("tcp_seq=-10000")
+        elif item == "badseq":
+            increment = badseq or "-10000"
+            if re.fullmatch(r"-?[0-9]+", increment):
+                out.append(f"tcp_seq={increment}")
+            else:
+                unsupported.append(f"invalid badseq increment:{increment}")
         elif item == "badsum": out.append("badsum")
         elif item == "md5sig": out.append("tcp_md5")
         elif item in ("none", ""): pass
@@ -254,28 +301,31 @@ def payload_for(group: Group) -> str:
 def convert_group(group: Group, req: dict[str, list[str]], blob_aliases_global: dict[str, str], unsupported: list[str]) -> list[str]:
     out: list[str] = []
     blob_alias: dict[str, list[str]] = {}
+    tls_alias_mod: dict[str, str] = {}
+    last_tls = ""
 
-    # Register profile assets. Blob declarations themselves are emitted once,
-    # before the first strategy group, because --blob is profile-independent.
+    # Файлы учитываются отдельно от inline hex и специального стандартного TLS fake.
     for key, value in group.options:
-        if key not in PATH_OPTIONS:
+        kind = OPTION_CLASS[key]
+        if key == "dpi-desync-fake-tls-mod":
+            if last_tls:
+                tls_alias_mod[last_tls] = tls_mod(value, unsupported)
             continue
-        kind = PATH_OPTIONS[key]
-        if key == "dpi-desync-split-seqovl-pattern" and value.startswith("0x"):
+        if kind not in {"hostlists", "ipsets", "blobs"}:
             continue
-        if kind != "blobs":
+        if kind in {"hostlists", "ipsets"}:
             add_requirement(req, kind, value)
             continue
-        if value.startswith("0x"):
-            continue
-        add_requirement(req, "blobs", value)
-        alias = blob_name(value, blob_aliases_global)
+        alias = blob_literal(key, value)
+        if not alias:
+            add_requirement(req, "blobs", value)
+            alias = blob_name(value, blob_aliases_global)
         blob_alias.setdefault(key, []).append(alias)
+        if key == "dpi-desync-fake-tls":
+            last_tls = alias
 
     for key, value in group.options:
-        if key in {"filter-tcp", "filter-udp", "filter-l7", "hostlist-domains"}:
-            out.append(f"--{key}={value}")
-        elif key in {"hostlist", "hostlist-exclude", "ipset", "ipset-exclude"}:
+        if OPTION_CLASS[key] in {"pass", "hostlists", "ipsets"}:
             out.append(f"--{key}={value}")
 
     base_payload = payload_for(group)
@@ -292,7 +342,7 @@ def convert_group(group: Group, req: dict[str, list[str]], blob_aliases_global: 
     if repeats and not re.fullmatch(r"[1-9][0-9]{0,2}", repeats):
         unsupported.append(f"invalid repeats:{repeats}")
         repeats = ""
-    fool = fooling_args(group.one("dpi-desync-fooling"), unsupported)
+    fool = fooling_args(group.one("dpi-desync-fooling"), group.one("dpi-desync-badseq-increment"), unsupported)
     ipid = group.one("ip-id")
     if ipid and ipid not in {"zero", "seq", "rnd", "none"}:
         unsupported.append(f"unsupported ip-id:{ipid}")
@@ -319,16 +369,30 @@ def convert_group(group: Group, req: dict[str, list[str]], blob_aliases_global: 
     if aliases_for("dpi-desync-fake-unknown-udp"):
         specs.append(("unknown", aliases_for("dpi-desync-fake-unknown-udp")))
 
-    def desync_args(mode: str, fake_alias: str = "") -> list[str]:
+    def desync_args(mode: str, payload: str, fake_alias: str = "") -> list[str]:
         args: list[str] = []
         if mode == "fake":
             if fake_alias:
                 args.append(f"blob={fake_alias}")
+            if payload == "tls_client_hello":
+                mod = tls_alias_mod.get(fake_alias, "")
+                if not mod and fake_alias == "fake_default_tls":
+                    mod = tls_mod(group.one("dpi-desync-fake-tls-mod"), unsupported)
+                if not mod:
+                    mod = "rnd,rndsni,dupsid" if fake_alias == "fake_default_tls" else "none"
+                args.append(f"tls_mod={mod}")
             if repeats:
                 args.append(f"repeats={repeats}")
             args.extend(fool)
             if ipid and ipid != "none":
                 args.append(f"ip_id={ipid}")
+        elif mode == "hostfakesplit":
+            args.extend(host_mod(group.one("dpi-desync-hostfakesplit-mod"), unsupported))
+            args.extend(fool)
+            if ipid and ipid != "none":
+                args.append(f"ip_id={ipid}")
+            if repeats:
+                args.append(f"repeats={repeats}")
         else:
             pos = group.one("dpi-desync-split-pos")
             if pos:
@@ -355,13 +419,14 @@ def convert_group(group: Group, req: dict[str, list[str]], blob_aliases_global: 
                         aliases = blob_alias.get("dpi-desync-split-seqovl-pattern", [])
                         if aliases:
                             args.append(f"seqovl_pattern={aliases[-1]}")
-            # nfqws1 --dpi-desync-fooling applies to split-generated fakes too.
-            args.extend(fool)
+            # Фулинг относится к фейкам fakedsplit, а не к исходным multisplit.
+            if mode == "fakedsplit":
+                args.extend(fool)
             if ipid and ipid != "none":
                 args.append(f"ip_id={ipid}")
         return args
 
-    supported_modes = {"fake", "fakedsplit", "multisplit", "multidisorder"}
+    supported_modes = {"fake", "fakedsplit", "multisplit", "multidisorder", "hostfakesplit", "syndata"}
     for mode in modes:
         if mode not in supported_modes:
             unsupported.append(f"unsupported desync mode:{mode}")
@@ -382,20 +447,24 @@ def convert_group(group: Group, req: dict[str, list[str]], blob_aliases_global: 
         elif base_payload == "all":
             unsupported.append("fake_without_blob_for_unknown_payload")
 
-    # Multiple --payload filters in one nfqws2 profile are explicitly supported:
-    # each filter applies to following Lua functions until the next --payload.
+    # SYN обрабатывается как empty payload до фильтров пакетов с данными.
+    if "syndata" in modes:
+        out.extend(("--payload=empty", "--lua-desync=syndata"))
+    if modes == ["syndata"]:
+        return out
+
     payload_specs = specs if specs else [(base_payload, [])]
     for payload, fake_aliases in payload_specs:
         out.append(f"--payload={payload}")
         for mode in modes:
-            if mode not in supported_modes:
+            if mode not in supported_modes or mode == "syndata":
                 continue
             if mode == "fake":
                 for alias in fake_aliases:
-                    args = desync_args(mode, alias)
+                    args = desync_args(mode, payload, alias)
                     out.append("--lua-desync=" + mode + (":" + ":".join(args) if args else ""))
             else:
-                args = desync_args(mode)
+                args = desync_args(mode, payload)
                 out.append("--lua-desync=" + mode + (":" + ":".join(args) if args else ""))
 
     return out
@@ -440,8 +509,13 @@ def convert_file(path: Path, source_version: str, game_mode: str) -> dict:
     version = sanitize_source_version(source_version)
     runtime_root = f"{RUNTIME_ROOT}/assets/{version}"
     text = path.read_text(encoding="utf-8-sig", errors="strict")
-    args = extract_winws_args(text)
-    global_opts, groups, unsupported = parse_options(args, game_mode, runtime_root)
+    try:
+        args = extract_winws_args(text)
+    except ValueError as exc:
+        args = []
+        global_opts, groups, unsupported = {}, [], [str(exc)]
+    else:
+        global_opts, groups, unsupported = parse_options(args, game_mode, runtime_root)
     req = {"blobs": [], "hostlists": [], "ipsets": []}
     blob_aliases_global: dict[str, str] = {}
     converted_groups: list[list[str]] = []

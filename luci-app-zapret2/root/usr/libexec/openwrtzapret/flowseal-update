@@ -139,12 +139,14 @@ copy_requirement() {
 	case "$rel" in *..*) return 2;; esac
 	src="$source_root/$rel"; dst="$asset_stage/$rel"
 	if [ ! -f "$src" ] || [ -L "$src" ]; then
-		# Flowseal может не включать пустой пользовательский list-general-user.txt в релиз.
-		# Это необязательный список: создаём пустой файл вместо блокировки всех профилей.
-		if [ "$rel" = "lists/list-general-user.txt" ] && [ ! -e "$src" ]; then
-			mkdir -p "${dst%/*}" || return 1
-			: > "$dst" || return 1
-			return 0
+		# Три пользовательских списка создаёт сам service.bat Flowseal, а не архив.
+		# Генерируем только эти точные имена; два исключения получают штатные заглушки.
+		if [ ! -e "$src" ]; then
+			case "$rel" in
+				lists/list-general-user.txt) mkdir -p "${dst%/*}" && : > "$dst" || return 1; return 0;;
+				lists/list-exclude-user.txt) mkdir -p "${dst%/*}" && printf '%s\n' 'domain.example.abc' > "$dst" || return 1; return 0;;
+				lists/ipset-exclude-user.txt) mkdir -p "${dst%/*}" && printf '%s\n' '203.0.113.113/32' > "$dst" || return 1; return 0;;
+			esac
 		fi
 		return 1
 	fi
