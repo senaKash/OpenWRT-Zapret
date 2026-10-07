@@ -5,6 +5,7 @@
 'require view';
 
 const listProfiles = rpc.declare({ object: 'openwrtzapret', method: 'list_profiles', expect: { '': {} }, reject: true });
+const getActiveProfile = rpc.declare({ object: 'openwrtzapret', method: 'profile_active', expect: { '': {} }, reject: true });
 const applyProfile = rpc.declare({ object: 'openwrtzapret', method: 'apply_profile', params: [ 'id' ], expect: { '': {} }, reject: true });
 const setManual = rpc.declare({ object: 'openwrtzapret', method: 'set_manual', expect: { '': {} }, reject: true });
 const startTest = rpc.declare({ object: 'openwrtzapret', method: 'start_test', params: [ 'id' ], expect: { '': {} }, reject: true });
@@ -22,6 +23,7 @@ return view.extend({
     testing: false,
     profiles: [],
     activeJob: null,
+    selectedProfileId: null,
     sortKey: 'name',
     sortAsc: true,
 
@@ -38,6 +40,11 @@ return view.extend({
         return id != '__manual__' && this.profiles.some(p => p.id == id && p.compatible === true);
     },
 
+    selectProfile: function() {
+        this.selectedProfileId = this.selector.value;
+        this.updateButtons();
+    },
+
     updateButtons: function() {
         let id = this.selector?.value;
         let locked = this.busy || this.testing;
@@ -50,6 +57,11 @@ return view.extend({
         for (let button of (this.rowApplyButtons || [])) button.disabled = locked || button.profileCompatible !== true;
     },
 
+    updateActiveProfile: function(id) {
+        let active = this.profiles.find(p => p.id == id);
+        this.active.textContent = active ? active.name : (id || _('Manual / Settings'));
+    },
+
     updateProfiles: function(data) {
         if (!data?.ok) {
             this.active.textContent = _('Unable to load profiles: %s').format(data?.error || 'unknown_error');
@@ -58,20 +70,19 @@ return view.extend({
             return;
         }
         this.profiles = data.profiles || [];
-        let selected = this.selector.value;
+        let selected = this.selectedProfileId || data.active_profile || '__manual__';
         this.selector.replaceChildren();
         this.selector.appendChild(E('option', { value: '__manual__' }, _('Manual / Settings')));
         for (let profile of this.profiles) {
             let unavailable = profile.compatible !== true;
-            this.selector.appendChild(E('option', {
-                value: profile.id,
-                disabled: unavailable
-            }, profile.name + (unavailable ? ' (' + _('incompatible') + ')' : '')));
+            let attrs = { value: profile.id };
+            if (unavailable) attrs.disabled = true;
+            this.selector.appendChild(E('option', attrs, profile.name + (unavailable ? ' (' + _('incompatible') + ')' : '')));
         }
-        let active = this.profiles.find(p => p.id == data.active_profile);
-        this.active.textContent = active ? active.name : _('Manual / Settings');
-        this.selector.value = selected || data.active_profile || '__manual__';
+        this.updateActiveProfile(data.active_profile);
+        this.selector.value = selected;
         if (this.selector.selectedIndex < 0) this.selector.value = '__manual__';
+        this.selectedProfileId = this.selector.value;
         this.renderResults();
         this.updateButtons();
     },
@@ -240,6 +251,10 @@ return view.extend({
                     this.showJob(current);
                     this.updateButtons();
                 }
+                else if (current?.ok) {
+                    let active = await getActiveProfile();
+                    if (active?.ok) this.updateActiveProfile(active.profile);
+                }
                 return;
             }
             let state = await jobStatus(this.activeJob);
@@ -329,7 +344,7 @@ return view.extend({
 
     render: function(data) {
         this.active = E('span');
-        this.selector = E('select', { 'change': L.bind(this.updateButtons, this) });
+        this.selector = E('select', { 'change': L.bind(this.selectProfile, this) });
         this.applyButton = E('button', { 'class': 'btn cbi-button-apply', 'click': L.bind(this.applySelected, this, null) }, _('Apply'));
         this.testButton = E('button', { 'class': 'btn cbi-button-action', 'click': L.bind(this.startTesting, this, false) }, _('Test Strategy'));
         this.testAllButton = E('button', { 'class': 'btn cbi-button-action', 'click': L.bind(this.startTesting, this, true) }, _('Test All Strategies'));
@@ -338,8 +353,8 @@ return view.extend({
         this.flowsealLocal = E('span', '—');
         this.flowsealRemote = E('span', '—');
         this.flowsealSummary = E('span', '—');
-        this.flowsealCheckButton = E('button', { 'class': 'btn cbi-button-action', 'click': L.bind(this.checkFlowseal, this, false) }, _('Check Flowseal'));
-        this.flowsealUpdateButton = E('button', { 'class': 'btn cbi-button-apply', 'click': L.bind(this.startFlowsealSync, this) }, _('Update Flowseal'));
+        this.flowsealCheckButton = E('button', { 'class': 'btn cbi-button-action', 'click': L.bind(this.checkFlowseal, this, false) }, _('Check Updates'));
+        this.flowsealUpdateButton = E('button', { 'class': 'btn cbi-button-apply', 'click': L.bind(this.startFlowsealSync, this) }, _('Update Strategies'));
         this.resultsBody = E('tbody');
 
         let page = E('div', [
@@ -362,7 +377,7 @@ return view.extend({
                 E('p', { 'class': 'cbi-value-description' }, _('Tests temporarily activate a strategy, run network reachability checks, and restore the previous configuration. Discord Voice UDP is a transport check only, not a real voice call.'))
             ]),
             E('div', { 'class': 'cbi-section' }, [
-                E('h3', _('Flowseal strategies')),
+                E('h3', _('Strategy updates')),
                 E('div', { 'class': 'cbi-value' }, [
                     E('label', { 'class': 'cbi-value-title' }, _('Local version')),
                     E('div', { 'class': 'cbi-value-field' }, this.flowsealLocal)
@@ -376,7 +391,7 @@ return view.extend({
                     E('div', { 'class': 'cbi-value-field' }, this.flowsealSummary)
                 ]),
                 E('div', { 'style': 'display:flex;flex-wrap:wrap;gap:.5rem' }, [ this.flowsealCheckButton, this.flowsealUpdateButton ]),
-                E('p', { 'class': 'cbi-value-description' }, _('Updates import Flowseal BAT files as inert data. Windows scripts and executables are never run, and updating never changes the active strategy automatically.'))
+                E('p', { 'class': 'cbi-value-description' }, _('Source: Flowseal. Strategy BAT files are imported as inert data and are never executed. Windows executables are never run, and updating never changes the active strategy automatically.'))
             ]),
             E('div', { 'class': 'cbi-section', 'style': 'overflow-x:auto' }, [
                 E('h3', _('Strategy test results')),

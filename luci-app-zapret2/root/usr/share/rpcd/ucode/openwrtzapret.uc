@@ -1,4 +1,4 @@
-import { popen, glob, readfile } from 'fs';
+import { popen, readfile } from 'fs';
 
 const SERVICE = '/usr/libexec/openwrtzapret/service';
 
@@ -41,40 +41,21 @@ function latestResult(profile) {
 	}
 }
 
-function profileFile(id) {
-	if (!validId(id))
-		return null;
-	let source = split(id, '-')[0];
-	let base = source == 'builtin' ? '/usr/share/openwrtzapret/profiles/builtin' : '/etc/openwrtzapret/profiles/' + source;
-	return base + '/' + id + '.json';
-}
-
 function getProfile(id) {
-	let path = profileFile(id);
-	if (!path)
+	if (!validId(id))
 		return { ok: false, error: 'invalid_profile_id' };
-	let check = invoke('profile_check', id);
-	if (!check.ok)
-		return check;
-	try {
-		let profile = json(readfile(path, 65536));
-		if (!profile || profile.id != id)
-			return { ok: false, error: 'invalid_profile_json' };
-		return { ok: true, profile: profile };
-	}
-	catch (e) {
-		return { ok: false, error: 'invalid_profile_json' };
-	}
+	let result = invoke('profile_get', id);
+	if (!result.ok || !result.profile || result.profile.id != id)
+		return { ok: false, error: result.error || 'invalid_profile_json' };
+	return result;
 }
 
 function listProfiles() {
-	let paths = glob('/usr/share/openwrtzapret/profiles/builtin/*.json',
-	                 '/etc/openwrtzapret/profiles/flowseal/*.json',
-	                 '/etc/openwrtzapret/profiles/user/*.json') || [];
+	let listing = invoke('profile_list');
+	if (!listing.ok)
+		return listing;
 	let profiles = [];
-	for (let path in paths) {
-		let parts = match(path, /\/([^/]+)\.json$/);
-		let id = parts ? parts[1] : null;
+	for (let id in listing.ids || []) {
 		if (!validId(id))
 			continue;
 		let result = getProfile(id);
