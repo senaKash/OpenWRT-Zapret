@@ -16,3 +16,10 @@ LICENSE text eol=lf
 *.patch text eol=lf
 *.default text eol=lf
 *.css text eol=lf
+*.sh text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.awk text eol=lf
+*.py text eol=lf
+
+*.bat text eol=crlf

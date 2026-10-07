@@ -1,0 +1,36 @@
+.owz-status-line, .owz-actions, .owz-job-progress {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .5rem 1rem;
+}
+
+.owz-status-line { margin: .4rem 0 1rem; }
+.owz-actions { margin: .5rem 0 1rem; }
+.owz-job-progress { margin-top: .4rem; }
+.owz-job-progress[hidden] { display: none; }
+.owz-job-progress progress { width: 18rem; max-width: 100%; }
+
+.owz-badge {
+    display: inline-block;
+    padding: .1em .45em;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    font-size: .85em;
+    font-weight: 600;
+    line-height: 1.4;
+}
+.owz-badge-pass { color: #27853e; background: rgba(39, 133, 62, .08); }
+.owz-badge-partial { color: #987000; background: rgba(152, 112, 0, .08); }
+.owz-badge-fail { color: #b43a32; background: rgba(180, 58, 50, .08); }
+.owz-badge-skip { color: #666; background: rgba(102, 102, 102, .08); }
+.owz-badge-testing { color: #2869a3; background: rgba(40, 105, 163, .08); }
+.owz-badge-neutral { color: #555; background: rgba(85, 85, 85, .06); }
+.owz-current-row > td { background: rgba(40, 105, 163, .08); }
+.owz-result-reason {
+    display: block;
+    max-width: 18rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
