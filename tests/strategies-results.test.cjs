@@ -50,8 +50,26 @@ const table = find(dom, 'table')[0];
 const headers = find(find(table, 'thead')[0], 'th');
 assert.deepEqual(headers.map(header => header.children[0]),
     ['Strategy', 'Result', 'YouTube', 'Discord', 'Cloudflare', 'GitHub', 'Tested', 'Action']);
+
+assert.equal(table.attrs.class.includes('owz-results-table'), true);
+const colgroup = find(table, 'colgroup')[0];
+const cols = find(colgroup, 'col');
+assert.equal(cols.length, 8);
+assert.deepEqual(cols.map(col => col.attrs.class), [
+    'owz-col-strategy', 'owz-col-result',
+    'owz-col-probe', 'owz-col-probe', 'owz-col-probe', 'owz-col-probe',
+    'owz-col-tested', 'owz-col-action'
+]);
+assert.equal(headers[0].attrs.class, 'owz-sortable');
+assert.equal(headers[1].attrs.class, 'owz-sortable');
+assert.equal(headers[6].attrs.class, 'owz-sortable');
 let cells = find(page.resultsBody, 'td');
 assert.equal(cells.length, headers.length);
+assert.equal(cells[0].attrs.class, 'owz-strategy-cell');
+assert.equal(cells[1].attrs.class, 'owz-result-cell');
+assert.equal(cells[2].attrs.class, 'owz-probe-cell');
+assert.equal(cells[6].attrs.class, 'owz-tested-cell');
+assert.equal(cells[7].attrs.class, 'owz-action-cell');
 assert.equal(cells[4].children[0], '—');
 assert.equal(cells[5].children[0], '—');
 assert.equal(page.stateBadge.textContent, 'RUNNING');

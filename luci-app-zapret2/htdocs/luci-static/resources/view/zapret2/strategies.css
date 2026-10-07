@@ -26,11 +26,106 @@
 .owz-badge-skip { color: #666; background: rgba(102, 102, 102, .08); }
 .owz-badge-testing { color: #2869a3; background: rgba(40, 105, 163, .08); }
 .owz-badge-neutral { color: #555; background: rgba(85, 85, 85, .06); }
-.owz-current-row > td { background: rgba(40, 105, 163, .08); }
-.owz-result-reason {
-    display: block;
-    max-width: 18rem;
+
+
+/* Test results: keep the native LuCI look, but make the data read as a table. */
+.owz-results-wrap {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid rgba(127, 127, 127, .28);
+    border-radius: 4px;
+}
+
+.owz-results-table {
+    width: 100%;
+    min-width: 940px;
+    margin: 0;
+    table-layout: fixed;
+    border-collapse: collapse;
+    border-spacing: 0;
+}
+
+.owz-results-table .owz-col-strategy { width: 27%; }
+.owz-results-table .owz-col-result   { width: 18%; }
+.owz-results-table .owz-col-probe    { width: 8%; }
+.owz-results-table .owz-col-tested   { width: 15%; }
+.owz-results-table .owz-col-action   { width: 8%; }
+
+.owz-results-table thead th {
+    padding: .6rem .65rem;
+    border-bottom: 2px solid rgba(127, 127, 127, .42);
+    background: rgba(127, 127, 127, .10);
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: left;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.owz-results-table thead th.owz-sortable {
+    cursor: pointer;
+}
+
+.owz-results-table thead th.owz-sortable:hover {
+    background: rgba(127, 127, 127, .16);
+}
+
+.owz-results-table tbody td {
+    box-sizing: border-box;
+    height: 2.8rem;
+    padding: .42rem .65rem;
+    border-bottom: 1px solid rgba(127, 127, 127, .22);
+    line-height: 1.25;
+    vertical-align: middle;
+}
+
+.owz-results-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.owz-results-table tbody tr:hover > td {
+    background: rgba(127, 127, 127, .055);
+}
+
+.owz-results-table .owz-current-row > td,
+.owz-results-table .owz-current-row:hover > td {
+    background: rgba(40, 105, 163, .10);
+}
+
+.owz-strategy-cell,
+.owz-tested-cell {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.owz-probe-cell,
+.owz-action-cell {
+    text-align: center;
+    white-space: nowrap;
+}
+
+.owz-result-cell {
+    overflow: hidden;
+}
+
+.owz-result-reason {
+    display: block;
+    max-width: 100%;
+    margin-top: .12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: .82em;
+    line-height: 1.15;
+    opacity: .78;
+}
+
+.owz-results-table .owz-badge {
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.owz-results-table .owz-action-cell .btn {
+    margin: 0;
 }
