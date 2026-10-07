@@ -6,7 +6,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-zapret2
 PKG_VERSION:=0.9.20260307
-PKG_RELEASE:=20
+PKG_RELEASE:=22
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=OpenWRTZapret contributors
 

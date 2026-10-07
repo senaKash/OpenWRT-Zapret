@@ -24,7 +24,7 @@ const deleteProfile = rpc.declare({ object: 'openwrtzapret', method: 'delete_pro
 
 document.head.appendChild(E('link', {
     rel: 'stylesheet',
-    href: L.resource('view/zapret2/strategies.css')
+    href: L.resource('view/zapret2/strategies.css') + '?v=22'
 }));
 
 return view.extend({
@@ -78,6 +78,13 @@ return view.extend({
             ? 'TESTING' : this.runtimeState;
         this.stateBadge.className = this.badgeClass(state);
         this.stateBadge.textContent = state;
+        this.updateActiveBadge();
+    },
+
+    updateActiveBadge: function() {
+        if (!this.active) return;
+        let strategyJob = this.jobState && !this.isTerminal(this.jobState.status) && this.jobState.mode != 'flowseal_update';
+        this.active.className = this.badgeClass(this.runtimeState == 'RUNNING' && !strategyJob ? 'RUNNING' : 'neutral');
     },
 
     canApply: function(id) {
@@ -112,7 +119,7 @@ return view.extend({
         this.activeProfileId = id || null;
         let active = this.profiles.find(p => p.id == id);
         this.active.textContent = active ? active.name : (id || _('Manual / Settings'));
-        this.active.className = this.badgeClass('neutral');
+        this.updateActiveBadge();
         if (previousId && previousId != id) this.updateResultRow(previousId);
         if (id) this.updateResultRow(id);
     },
@@ -542,7 +549,7 @@ return view.extend({
             lock.profileId = profile.id;
             this.rowLockButtons.push(lock);
             let remove = E('button', {
-                'class': 'btn cbi-button-negative owz-icon-button owz-delete-button',
+                'class': 'btn owz-icon-button owz-delete-button',
                 'title': _('Delete strategy'),
                 'aria-label': _('Delete strategy'),
                 'disabled': profile.locked === true || profile.id == this.activeProfileId,

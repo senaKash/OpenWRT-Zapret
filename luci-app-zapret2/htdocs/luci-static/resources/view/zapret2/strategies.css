@@ -51,6 +51,7 @@
 }
 
 .owz-results-table {
+    display: table;
     width: 100%;
     min-width: 940px;
     margin: 0;
@@ -58,6 +59,11 @@
     border-collapse: collapse;
     border-spacing: 0;
 }
+
+.owz-results-table > thead { display: table-header-group; }
+.owz-results-table > tbody { display: table-row-group; }
+.owz-results-table tr { display: table-row; }
+.owz-results-table th, .owz-results-table td { display: table-cell; box-sizing: border-box; }
 
 .owz-results-table .owz-col-index    { width: 32px; }
 .owz-results-table .owz-col-lock     { width: 28px; }
@@ -103,13 +109,15 @@
     background: rgba(127, 127, 127, .055);
 }
 
-.owz-results-table .owz-active-strategy > td,
-.owz-results-table .owz-active-strategy:hover > td {
-    background: rgba(40, 105, 163, .055);
+.owz-results-table tbody tr.owz-active-strategy > td,
+.owz-results-table tbody tr.owz-active-strategy:hover > td {
+    background: rgba(39, 133, 62, .14);
 }
 
-.owz-results-table .owz-current-row > td,
-.owz-results-table .owz-current-row:hover > td {
+.owz-results-table tbody tr.owz-active-strategy > td:first-child { box-shadow: inset 3px 0 #27853e; }
+
+.owz-results-table tbody tr.owz-current-row > td,
+.owz-results-table tbody tr.owz-current-row:hover > td {
     background: rgba(40, 105, 163, .10);
 }
 
@@ -202,11 +210,14 @@
 }
 
 .owz-delete-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     font-size: 14px;
     color: #b43a32;
-    border: 1px solid currentColor;
-    background: rgba(180, 58, 50, .10);
+    border: 1px solid rgba(127, 127, 127, .5);
+    background: rgba(127, 127, 127, .08);
 }
 
-.owz-delete-button:hover:not(:disabled) { background: rgba(180, 58, 50, .22); }
+.owz-delete-button:hover:not(:disabled) { background: rgba(127, 127, 127, .16); }
 .owz-delete-button:disabled { opacity: .45; }

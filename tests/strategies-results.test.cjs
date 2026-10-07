@@ -4,6 +4,7 @@ const vm = require('node:vm');
 
 const code = fs.readFileSync('luci-app-zapret2/htdocs/luci-static/resources/view/zapret2/strategies.js', 'utf8');
 assert.equal(code.includes('Check Updates'), false);
+let stylesheet;
 
 function E(tag, attrs, content) {
     if (arguments.length === 2 && (typeof attrs !== 'object' || Array.isArray(attrs) || attrs?.tag)) {
@@ -28,11 +29,12 @@ const context = {
     _: value => value,
     E,
     L: { bind: (fn, receiver, ...args) => fn.bind(receiver, ...args), resource: path => path, url: path => path },
-    document: { head: { appendChild() {} } },
+    document: { head: { appendChild(node) { stylesheet = node; } } },
     ui: { addNotification: () => {} },
     poll: { add: () => {} }
 };
 const page = vm.runInNewContext(`(function(){String.prototype.format = function(...args) { let i = 0; return this.replace(/%[ds]/g, () => String(args[i++])); }; ${code}\n})()`, context);
+assert.equal(stylesheet.attrs.href, 'view/zapret2/strategies.css?v=21');
 page.updateProfiles = function(data) { this.profiles = data.profiles; this.updateActiveProfile(data.active_profile); this.renderResults(); };
 page.updateFlowsealInfo = () => {};
 page.updateButtons = () => {};
@@ -85,6 +87,7 @@ assert.equal(cells[9].children[0].children[0], '🗑');
 assert.equal(find(page.resultsBody, 'button').length, 2);
 assert.equal(page.resultRows[profile.id].row.className, 'owz-active-strategy');
 assert.equal(page.stateBadge.textContent, 'RUNNING');
+assert.equal(page.active.className, 'owz-badge owz-badge-pass');
 
 profile.latest_result = {
     status: 'PARTIAL', tested_at: 2, reason: 'missing requirement: /tmp/example.bin',
@@ -109,6 +112,7 @@ assert.equal(page.jobProgressRow.hidden, false);
 assert.equal(page.jobText.textContent.includes('17 / 21'), true);
 assert.equal(page.jobText.textContent.includes('general (ALT12)'), true);
 assert.equal(page.stateBadge.textContent, 'TESTING');
+assert.equal(page.active.className, 'owz-badge owz-badge-neutral');
 assert.equal(page.resultRows[profile.id].row, row);
 assert.equal(row.className.includes('owz-current-row'), true);
 assert.equal(row.className.includes('owz-active-strategy'), true);
@@ -137,6 +141,7 @@ assert.equal(page.resultRows[profile.id].row, firstRow);
 assert.equal(page.resultRows[profile.id].result.children[0].children[0], 'PASS');
 assert.equal(page.resultRows[next.id].result.children[0].children[0], 'TESTING');
 page.showJob(null);
+assert.equal(page.active.className, 'owz-badge owz-badge-pass');
 page.updateActiveProfile(next.id);
 assert.equal(page.resultRows[profile.id].row.className, '');
 assert.equal(page.resultRows[next.id].row.className, 'owz-active-strategy');
