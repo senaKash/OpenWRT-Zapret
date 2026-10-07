@@ -40,7 +40,7 @@
 	},
 
 	"admin/services/zapret2/settings": {
-		"title": "Settings",
+		"title": "Manual / Advanced",
 		"order": 20,
 		"action": {
 			"type": "view",

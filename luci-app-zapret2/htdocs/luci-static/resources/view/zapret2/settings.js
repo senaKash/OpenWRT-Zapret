@@ -29,12 +29,23 @@ return view.extend({
         if (!data) {
             return;
         }
+        let activeProfile = uci.get(tools.appName, 'config', 'active_profile');
+        if (activeProfile) {
+            return E('div', [
+                E('h2', _('Manual / Advanced')),
+                E('div', { 'class': 'cbi-section' }, [
+                    E('p', _('Manual settings are hidden while a strategy profile is active.')),
+                    E('p', _('Switch to Manual / Settings on the Strategies page to edit the engine configuration.')),
+                    E('a', { 'href': L.url('admin/services/zapret2/strategies') }, _('Open Strategies'))
+                ])
+            ]);
+        }
         this.svc_info = data.svc_info;
         tools.execDefferedAction(this.svc_info);
 
         let m, s, o, tabname;
 
-        m = new form.Map(tools.appName, tools.AppName + ' - ' + _('Settings'));
+        m = new form.Map(tools.appName, tools.AppName + ' - ' + _('Manual / Advanced'));
 
         s = m.section(form.NamedSection, 'config');
         s.anonymous = true;

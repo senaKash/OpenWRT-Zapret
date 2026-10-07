@@ -5,6 +5,7 @@
 'require view';
 
 const getStatus = rpc.declare({ object: 'openwrtzapret', method: 'status', expect: { '': {} }, reject: true });
+const getActiveProfile = rpc.declare({ object: 'openwrtzapret', method: 'profile_active', expect: { '': {} }, reject: true });
 const start = rpc.declare({ object: 'openwrtzapret', method: 'start', expect: { '': {} }, reject: true });
 const stop = rpc.declare({ object: 'openwrtzapret', method: 'stop', expect: { '': {} }, reject: true });
 const restart = rpc.declare({ object: 'openwrtzapret', method: 'restart', expect: { '': {} }, reject: true });
@@ -15,10 +16,10 @@ return view.extend({
     currentState: 'ERROR',
 
     load: function() {
-        return getStatus();
+        return Promise.all([getStatus(), getActiveProfile().catch(() => null)]);
     },
 
-    showStatus: function(value) {
+    showStatus: function(value, profile) {
         let valid = value && typeof value.running == 'boolean' &&
             typeof value.daemon == 'boolean' && typeof value.firewall == 'boolean' &&
             typeof value.nfqueue == 'boolean' && typeof value.partial == 'boolean';
@@ -45,6 +46,8 @@ return view.extend({
         this.fields.enabled.textContent = valid && typeof value.enabled == 'boolean'
             ? (value.enabled ? _('Enabled') : _('Disabled')) : _('Unknown');
         this.fields.error.textContent = value?.error ? String(value.error) : '';
+        this.fields.profile.textContent = profile?.ok === true
+            ? (profile.profile || _('Manual configuration')) : _('Unknown');
         this.updateButtons();
     },
 
@@ -58,9 +61,10 @@ return view.extend({
     refresh: async function() {
         if (this.busy) return;
         try {
-            this.showStatus(await getStatus());
+            let [status, profile] = await Promise.all([getStatus(), getActiveProfile().catch(() => null)]);
+            this.showStatus(status, profile);
         } catch (e) {
-            this.showStatus({ error: 'status_rpc_failed' });
+            this.showStatus({ error: 'status_rpc_failed' }, null);
         }
     },
 
@@ -93,8 +97,11 @@ return view.extend({
     },
 
     refreshAfterAction: async function() {
-        try { this.showStatus(await getStatus()); }
-        catch (e) { this.showStatus({ error: 'status_rpc_failed' }); }
+        try {
+            let [status, profile] = await Promise.all([getStatus(), getActiveProfile().catch(() => null)]);
+            this.showStatus(status, profile);
+        }
+        catch (e) { this.showStatus({ error: 'status_rpc_failed' }, null); }
     },
 
     render: function(data) {
@@ -117,13 +124,14 @@ return view.extend({
                 field(_('Firewall'), 'firewall'),
                 field(_('NFQUEUE rules'), 'nfqueue'),
                 field(_('Autostart'), 'enabled'),
+                field(_('Active profile'), 'profile'),
                 field(_('Error'), 'error')
             ]),
             E('div', { 'class': 'cbi-section', 'style': 'display:flex; flex-wrap:wrap; gap:.5rem' }, [
                 this.buttons.start, this.buttons.stop, this.buttons.restart
             ])
         ]);
-        this.showStatus(data);
+        this.showStatus(data?.[0], data?.[1]);
         poll.add(L.bind(this.refresh, this), 5);
         return page;
     },

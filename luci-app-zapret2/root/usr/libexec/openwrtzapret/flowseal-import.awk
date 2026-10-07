@@ -3,7 +3,7 @@
 
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 function jesc(s,    t) {
-	t=s; gsub(/\\/, "\\\\", t); gsub(/\"/, "\\\"", t); gsub(/\t/, "\\t", t); gsub(/\n/, "\\n", t); gsub(/\r/, "\\r", t); return t
+	t=s; gsub(/\\/, "\\\\", t); gsub(/"/, "\\\"", t); gsub(/\t/, "\\t", t); gsub(/\n/, "\\n", t); gsub(/\r/, "\\r", t); return t
 }
 function arr_has(csv, needle,    a,n,i) {
 	n=split(csv,a,","); for(i=1;i<=n;i++) if(trim(a[i])==needle) return 1; return 0
@@ -31,26 +31,35 @@ function resolve_value(v,    out) {
 	gsub(/%GameFilterTCP%/, game_tcp, out); gsub(/%GameFilterUDP%/, game_udp, out)
 	gsub(/%BIN%/, runtime_base "/bin/", out); gsub(/%LISTS%/, runtime_base "/lists/", out)
 	gsub(/\\/, "/", out)
-	if(out ~ /%[^%]+%/) { add_unsupported("unresolved variable:" out); return out }
+	if(index(out,"%")>0) { add_unsupported("unresolved variable:" out); return out }
 	return out
 }
-function known_option(k) {
-	return (k=="filter-tcp" || k=="filter-udp" || k=="filter-l7" || k=="hostlist-domains" ||
-	k=="hostlist" || k=="hostlist-exclude" || k=="ipset" || k=="ipset-exclude" ||
-	k=="wf-tcp" || k=="wf-udp" || k=="ip-id" || k=="dpi-desync" || k=="dpi-desync-repeats" ||
-	k=="dpi-desync-fooling" || k=="dpi-desync-fakedsplit-pattern" || k=="dpi-desync-split-pos" ||
-	k=="dpi-desync-split-seqovl" || k=="dpi-desync-split-seqovl-pattern" || k=="dpi-desync-any-protocol" ||
-	k=="dpi-desync-cutoff" || k=="dpi-desync-fake-quic" || k=="dpi-desync-fake-discord" ||
-	k=="dpi-desync-fake-stun" || k=="dpi-desync-fake-tls" || k=="dpi-desync-fake-http" ||
-	k=="dpi-desync-fake-unknown" || k=="dpi-desync-fake-unknown-udp")
+function option_class(k) {
+	# Классификация задаёт единственное место для поддерживаемых входных опций.
+	if(k=="filter-tcp"||k=="filter-udp"||k=="filter-l7"||k=="filter-l3"||k=="hostlist-domains"||k=="hostlist-exclude-domains") return "pass"
+	if(k=="hostlist"||k=="hostlist-exclude") return "hostlists"
+	if(k=="ipset"||k=="ipset-exclude") return "ipsets"
+	if(k=="dpi-desync-fake-quic"||k=="dpi-desync-fake-discord"||k=="dpi-desync-fake-stun"||k=="dpi-desync-fake-tls"||k=="dpi-desync-fake-http"||k=="dpi-desync-fake-unknown"||k=="dpi-desync-fake-unknown-udp"||k=="dpi-desync-split-seqovl-pattern") return "blobs"
+	if(k=="wf-tcp"||k=="wf-udp") return "global"
+	if(k=="ip-id"||k=="dpi-desync"||k=="dpi-desync-repeats"||k=="dpi-desync-fooling"||k=="dpi-desync-fakedsplit-pattern"||k=="dpi-desync-split-pos"||k=="dpi-desync-split-seqovl"||k=="dpi-desync-any-protocol"||k=="dpi-desync-cutoff"||k=="dpi-desync-fake-tls-mod"||k=="dpi-desync-hostfakesplit-mod"||k=="dpi-desync-badseq-increment") return "translate"
+	return "unsupported"
 }
-function path_kind(k) {
-	if(k=="hostlist" || k=="hostlist-exclude") return "hostlists"
-	if(k=="ipset" || k=="ipset-exclude") return "ipsets"
-	if(k=="dpi-desync-fake-quic" || k=="dpi-desync-fake-discord" || k=="dpi-desync-fake-stun" ||
-	   k=="dpi-desync-fake-tls" || k=="dpi-desync-fake-http" || k=="dpi-desync-fake-unknown" ||
-	   k=="dpi-desync-fake-unknown-udp" || k=="dpi-desync-split-seqovl-pattern") return "blobs"
+function blob_literal(k,v) {
+	if(v ~ /^0x[0-9A-Fa-f]+$/ && length(v)%2==0) return v
+	if(k=="dpi-desync-fake-tls" && v=="!") return "fake_default_tls"
 	return ""
+}
+function tls_mod(v,    a,n,i,x) {
+	if(v=="") return ""
+	n=split_csv(v,a)
+	for(i=1;i<=n;i++) { x=a[i]; if(x!="none"&&x!="rnd"&&x!="rndsni"&&x!="dupsid"&&x!="padencap"&&x !~ /^sni=[A-Za-z0-9.-]+$/) { add_unsupported("unsupported tls mod:" x); return "" } }
+	return v
+}
+function host_mod(v,    a,n,i,x,out) {
+	if(v=="") return ""
+	n=split_csv(v,a); out=""
+	for(i=1;i<=n;i++) { x=a[i]; if(x=="none"||x=="altorder=0") continue; if(x=="altorder=1") { add_unsupported("hostfakesplit altorder=1 has no equivalent in pinned nfqws2"); continue } if(x ~ /^host=[A-Za-z0-9.-]+$/) { out=out (out?":":"") x; continue } add_unsupported("unsupported hostfakesplit mod:" x) }
+	return out
 }
 function one(g,k,    n) { n=opt_count[g SUBSEP k]; return n ? opt_val[g SUBSEP k SUBSEP n] : "" }
 function values_csv(g,k,    n,i,out) { n=opt_count[g SUBSEP k]; out=""; for(i=1;i<=n;i++) out=out (out?",":"") opt_val[g SUBSEP k SUBSEP i]; return out }
@@ -64,7 +73,7 @@ function split_csv(v,a,    raw,n,i,c) { n=split(v,raw,","); c=0; for(i=1;i<=n;i+
 function normalize_ports(v,    a,n,i,out) { n=split_csv(v,a); out=""; for(i=1;i<=n;i++){ if(game_mode=="none" && a[i]=="12") continue; out=out (out?",":"") a[i] } return out }
 function fooling(g,    a,n,i,out,x) {
 	n=split_csv(one(g,"dpi-desync-fooling"),a); out=""
-	for(i=1;i<=n;i++){ x=a[i]; if(x=="ts") x="tcp_ts=-600000"; else if(x=="badseq") x="tcp_seq=-10000"; else if(x=="badsum") x="badsum"; else if(x=="md5sig") x="tcp_md5"; else if(x=="none"||x=="") continue; else { add_unsupported("unsupported fooling:" x); continue } out=out (out?":":"") x }
+	for(i=1;i<=n;i++){ x=a[i]; if(x=="ts") x="tcp_ts=-600000"; else if(x=="badseq") { x=one(g,"dpi-desync-badseq-increment"); if(x=="") x="-10000"; if(x !~ /^-?[0-9]+$/) { add_unsupported("invalid badseq increment:" x); continue } x="tcp_seq=" x } else if(x=="badsum") x="badsum"; else if(x=="md5sig") x="tcp_md5"; else if(x=="none"||x=="") continue; else { add_unsupported("unsupported fooling:" x); continue } out=out (out?":":"") x }
 	return out
 }
 function payload_for(g,    l7,tcp,udp,p,out) {
@@ -78,14 +87,20 @@ function payload_for(g,    l7,tcp,udp,p,out) {
 	return "all"
 }
 function add_arg(s) { group_out = group_out (group_out?" ":"") s }
-function add_desync(mode, alias, g,    args,x,pos,pat,seqovl,fool,ipid) {
+function add_desync(mode, alias, g, payload,    args,x,pos,pat,seqovl,fool,ipid,mod) {
 	args=""; fool=fooling(g); ipid=one(g,"ip-id")
 	if(ipid!="" && ipid!="zero" && ipid!="seq" && ipid!="rnd" && ipid!="none") { add_unsupported("unsupported ip-id:" ipid); ipid="" }
 	if(mode=="fake") {
 		if(alias!="") args="blob=" alias
+		if(payload=="tls_client_hello") { mod=tls_alias_mod[g SUBSEP alias]; if(mod=="" && alias=="fake_default_tls") mod=tls_mod(one(g,"dpi-desync-fake-tls-mod")); if(mod=="") mod=(alias=="fake_default_tls"?"rnd,rndsni,dupsid":"none"); args=args (args?":":"") "tls_mod=" mod }
 		x=one(g,"dpi-desync-repeats"); if(x!="") { if(x !~ /^[1-9][0-9]{0,2}$/) add_unsupported("invalid repeats:" x); else args=args (args?":":"") "repeats=" x }
 		if(fool!="") args=args (args?":":"") fool
 		if(ipid!="" && ipid!="none") args=args (args?":":"") "ip_id=" ipid
+	} else if(mode=="hostfakesplit") {
+		mod=host_mod(one(g,"dpi-desync-hostfakesplit-mod")); if(mod!="") args=mod
+		if(fool!="") args=args (args?":":"") fool
+		if(ipid!="" && ipid!="none") args=args (args?":":"") "ip_id=" ipid
+		x=one(g,"dpi-desync-repeats"); if(x!="") args=args (args?":":"") "repeats=" x
 	} else {
 		pos=one(g,"dpi-desync-split-pos"); if(pos!="") args="pos=" pos
 		if(mode=="fakedsplit") { pat=one(g,"dpi-desync-fakedsplit-pattern"); if(pat!="") { if(pat ~ /^0x[0-9A-Fa-f]+$/) args=args (args?":":"") "pattern=" pat; else add_unsupported("file fakedsplit pattern is not mapped") } }
@@ -93,7 +108,7 @@ function add_desync(mode, alias, g,    args,x,pos,pat,seqovl,fool,ipid) {
 			seqovl=one(g,"dpi-desync-split-seqovl"); if(seqovl!="") { if(seqovl ~ /^[0-9]+$/) args=args (args?":":"") "seqovl=" seqovl; else add_unsupported("invalid seqovl:" seqovl) }
 			pat=one(g,"dpi-desync-split-seqovl-pattern"); if(pat!="") { if(pat ~ /^0x[0-9A-Fa-f]+$/) args=args (args?":":"") "seqovl_pattern=" pat; else { x=last_alias[g SUBSEP "dpi-desync-split-seqovl-pattern"]; if(x!="") args=args (args?":":"") "seqovl_pattern=" x } }
 		}
-		if(fool!="") args=args (args?":":"") fool
+		if(mode=="fakedsplit" && fool!="") args=args (args?":":"") fool
 		if(ipid!="" && ipid!="none") args=args (args?":":"") "ip_id=" ipid
 	}
 	add_arg("--lua-desync=" mode (args!=""?":" args:""))
@@ -103,31 +118,37 @@ function emit_payload_modes(g,payload, aliases,    modes,nm,i,mode,aa,na,j) {
 	nm=split_csv(one(g,"dpi-desync"),modes)
 	for(i=1;i<=nm;i++) {
 		mode=modes[i]
-		if(mode!="fake" && mode!="fakedsplit" && mode!="multisplit" && mode!="multidisorder") { add_unsupported("unsupported desync mode:" mode); continue }
-		if(mode=="fake") { na=split_csv(aliases,aa); for(j=1;j<=na;j++) add_desync(mode,aa[j],g) }
-		else add_desync(mode,"",g)
+		if(mode=="syndata") continue
+		if(mode!="fake" && mode!="fakedsplit" && mode!="multisplit" && mode!="multidisorder" && mode!="hostfakesplit") { add_unsupported("unsupported desync mode:" mode); continue }
+		if(mode=="fake") { na=split_csv(aliases,aa); for(j=1;j<=na;j++) add_desync(mode,aa[j],g,payload) }
+		else add_desync(mode,"",g,payload)
 	}
 }
-function convert_group(g,    i,k,v,kind,alias,base,cut,modes,nm,m,hasfake,specn,p,als,j,tmp,bc,na,aa) {
+function convert_group(g,    i,k,v,kind,alias,base,cut,modes,nm,m,hasfake,specn,p,als,j,tmp,bc,na,aa,last_tls) {
 	group_out=""
 	# First register every referenced asset and its stable blob alias.
 	for(i=1;i<=seq_count[g];i++) {
-		k=seq_key[g SUBSEP i]; v=seq_val[g SUBSEP i]; kind=path_kind(k); if(kind=="") continue
-		if(k=="dpi-desync-split-seqovl-pattern" && v ~ /^0x/) continue
-		if(!safe_path(v)) { add_unsupported("unsafe translated path:" v); continue }
-		if(kind!="blobs") { add_unique(kind,v); continue }
-		if(v ~ /^0x/) continue
-		add_unique("blobs",v); alias=alias_for(v); blob_key_count[g SUBSEP k]=blob_key_count[g SUBSEP k]+1; bc=blob_key_count[g SUBSEP k]; blob_key_alias[g SUBSEP k SUBSEP bc]=alias; last_alias[g SUBSEP k]=alias
+		k=seq_key[g SUBSEP i]; v=seq_val[g SUBSEP i]; kind=option_class(k)
+		if(k=="dpi-desync-fake-tls-mod") { if(last_tls!="") tls_alias_mod[g SUBSEP last_tls]=tls_mod(v); continue }
+		if(kind!="hostlists"&&kind!="ipsets"&&kind!="blobs") continue
+		if(kind=="blobs") alias=blob_literal(k,v); else alias=""
+		if(alias=="") {
+			if(!safe_path(v)) { add_unsupported("unsafe translated path:" v); continue }
+			if(kind!="blobs") { add_unique(kind,v); continue }
+			add_unique("blobs",v); alias=alias_for(v)
+		}
+		if(kind=="blobs") { blob_key_count[g SUBSEP k]++; bc=blob_key_count[g SUBSEP k]; blob_key_alias[g SUBSEP k SUBSEP bc]=alias; last_alias[g SUBSEP k]=alias; if(k=="dpi-desync-fake-tls") last_tls=alias }
 	}
 	# Preserve selectors/hostlists/ipsets in source order.
 	for(i=1;i<=seq_count[g];i++) {
 		k=seq_key[g SUBSEP i]; v=seq_val[g SUBSEP i]
-		if(k=="filter-tcp"||k=="filter-udp"||k=="filter-l7"||k=="hostlist-domains"||k=="hostlist"||k=="hostlist-exclude"||k=="ipset"||k=="ipset-exclude") add_arg("--" k "=" v)
+		kind=option_class(k); if(kind=="pass"||kind=="hostlists"||kind=="ipsets") add_arg("--" k "=" v)
 	}
 	base=payload_for(g); cut=one(g,"dpi-desync-cutoff")
 	if(cut!="") { if(cut ~ /^[ndbs][0-9]+$/) add_arg("--out-range=-" cut); else add_unsupported("unsupported cutoff:" cut) }
 	nm=split_csv(one(g,"dpi-desync"),modes); hasfake=0
-	for(i=1;i<=nm;i++) if(modes[i]=="fake") hasfake=1
+	for(i=1;i<=nm;i++) { if(modes[i]=="fake") hasfake=1; if(modes[i]=="syndata") { add_arg("--payload=empty"); add_arg("--lua-desync=syndata") } }
+	if(nm==1 && modes[1]=="syndata") return group_out
 	# Protocol-specific fake payloads; one payload filter per fake type.
 	specn=0
 	k="dpi-desync-fake-quic"; if(blob_key_count[g SUBSEP k]) { p[++specn]="quic_initial"; als[specn]=aliases_csv(g,k) }
@@ -149,7 +170,7 @@ function convert_group(g,    i,k,v,kind,alias,base,cut,modes,nm,m,hasfake,specn,
 		for(i=1;i<=specn;i++) {
 			# For payload-specific specs, all modes are emitted. fake gets aliases; split modes are repeated like Phase G converter.
 			add_arg("--payload=" p[i]);
-			for(j=1;j<=nm;j++) { m=modes[j]; if(m!="fake"&&m!="fakedsplit"&&m!="multisplit"&&m!="multidisorder") { add_unsupported("unsupported desync mode:" m); continue } if(m=="fake") { na=split_csv(als[i],aa); for(tmp=1;tmp<=na;tmp++) add_desync(m,aa[tmp],g) } else add_desync(m,"",g) }
+			for(j=1;j<=nm;j++) { m=modes[j]; if(m=="syndata") continue; if(m!="fake"&&m!="fakedsplit"&&m!="multisplit"&&m!="multidisorder"&&m!="hostfakesplit") { add_unsupported("unsupported desync mode:" m); continue } if(m=="fake") { na=split_csv(als[i],aa); for(tmp=1;tmp<=na;tmp++) add_desync(m,aa[tmp],g,p[i]) } else add_desync(m,"",g,p[i]) }
 		}
 	}
 	return group_out
@@ -157,10 +178,11 @@ function convert_group(g,    i,k,v,kind,alias,base,cut,modes,nm,m,hasfake,specn,
 function aliases_csv(g,k,    n,i,out) { n=blob_key_count[g SUBSEP k]; out=""; for(i=1;i<=n;i++) out=out (out?",":"") blob_key_alias[g SUBSEP k SUBSEP i]; return out }
 function json_array(arr,n,    i,out) { out="["; for(i=1;i<=n;i++) out=out (i>1?",":"") "\"" jesc(arr[i]) "\""; return out "]" }
 function canonical_req(arr,n,    i,out) { out=""; for(i=1;i<=n;i++) out=out (i>1?",":"") arr[i]; return out }
-function process_command(line,    tok,nt,i,t,found,body,pos,k,v,rawv,g,n) {
+function process_command(line,    tok,nt,i,t,found,body,pos,k,v,rawv,g,n,kind) {
 	nt=tokenize(line,tok); found=0
-	for(i=1;i<=nt;i++) { t=tolower(tok[i]); gsub(/\\/,"/",t); if(t ~ /winws\.exe$/) { found=i; break } }
-	if(!found) return 0
+	if(tolower(tok[1])!="start") { add_unsupported("unsupported BAT command before winws.exe"); return 1 }
+	for(i=1;i<=nt;i++) { t=tolower(tok[i]); gsub(/\\/,"/",t); if(t=="%bin%winws.exe") { found=i; break } }
+	if(!found || found!=4 || tolower(tok[3])!="/min") { add_unsupported("unsafe or unsupported winws invocation"); return 1 }
 	g=1; groups=1
 	for(i=found+1;i<=nt;i++) {
 		raw_args[++n_raw]=tok[i]
@@ -169,15 +191,20 @@ function process_command(line,    tok,nt,i,t,found,body,pos,k,v,rawv,g,n) {
 		body=substr(tok[i],3); pos=index(body,"="); if(!pos) { add_unsupported(tok[i]); continue }
 		k=substr(body,1,pos-1); rawv=substr(body,pos+1)
 		if((k=="filter-tcp"||k=="filter-udp") && (tolower(trim(rawv))=="%gamefiltertcp%"||tolower(trim(rawv))=="%gamefilterudp%")) group_game[g]=1
+		kind=option_class(k)
+		if(kind=="unsupported") { add_unsupported("unsupported option:" k); continue }
+		# Операторы CMD и оболочки запрещены даже внутри кавычек; BAT остаётся только данными.
+		if(rawv ~ /[&|<>;`$]/ || index(rawv,"^")>0 || (index(rawv,"!")>0 && !(k=="dpi-desync-fake-tls" && rawv=="!"))) { add_unsupported("unsafe option value:" k); continue }
 		v=resolve_value(rawv)
-		if(!known_option(k)) { add_unsupported(tok[i]); continue }
+		if(k=="filter-l3" && v!="ipv4" && v!="ipv6") { add_unsupported("unsupported filter-l3:" v); continue }
+		if((k=="hostlist-domains"||k=="hostlist-exclude-domains") && v !~ /^[A-Za-z0-9.,-]+$/) { add_unsupported("invalid domains:" v); continue }
 		if(k=="wf-tcp") wf_tcp=v; else if(k=="wf-udp") wf_udp=v; else add_opt(g,k,v)
 	}
 	return 1
 }
 function tokenize(line,out,    i,ch,q,buf,n) {
 	q=0; buf=""; n=0
-	for(i=1;i<=length(line);i++) { ch=substr(line,i,1); if(ch=="\"") { q=!q; continue } if(ch ~ /[ \t]/ && !q) { if(buf!="") { out[++n]=buf; buf="" } } else buf=buf ch }
+	for(i=1;i<=length(line);i++) { ch=substr(line,i,1); if(ch=="\"") { q=!q; continue } if(ch=="^" && substr(line,i+1,1)=="!") { buf=buf "!"; i++; continue } if(ch ~ /[ \t]/ && !q) { if(buf!="") { out[++n]=buf; buf="" } } else buf=buf ch }
 	if(q) { add_unsupported("unterminated quote in BAT command"); return n }
 	if(buf!="") out[++n]=buf
 	return n
@@ -195,7 +222,7 @@ BEGIN {
 	logical=""
 }
 END {
-	if(!found_cmd) { print "winws.exe command not found" > "/dev/stderr"; exit 2 }
+	if(!found_cmd) add_unsupported("winws.exe command not found")
 	for(g=1;g<=groups;g++) {
 		if(seq_count[g]<1) continue
 		if(group_game[g] && game_mode=="none") { add_warning("Flowseal GameFilter-only branches omitted"); continue }

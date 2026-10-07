@@ -56,6 +56,7 @@
 				],
 				"openwrtzapret": [
 					"status",
+					"profile_active",
 					"list_profiles",
 					"get_profile",
 					"current_job",
