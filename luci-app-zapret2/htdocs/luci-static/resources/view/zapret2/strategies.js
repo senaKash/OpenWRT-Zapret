@@ -24,13 +24,14 @@ const deleteProfile = rpc.declare({ object: 'openwrtzapret', method: 'delete_pro
 
 document.head.appendChild(E('link', {
     rel: 'stylesheet',
-    href: L.resource('view/zapret2/strategies.css') + '?v=22'
+    href: L.resource('view/zapret2/strategies.css') + '?v=23'
 }));
 
 return view.extend({
     busy: false,
     testing: false,
     profiles: [],
+    profilesLoaded: false,
     activeJob: null,
     selectedProfileId: null,
     sortKey: 'name',
@@ -40,8 +41,13 @@ return view.extend({
     idleRefreshMs: 10000,
 
     load: function() {
-        // Критический путь загрузки содержит только локальные данные, нужные для первого render.
-        return Promise.all([listProfiles(), currentJob(), getStatus().catch(() => null)]);
+        // Список профилей проверяется backend долго; таблица заполняется после первого render.
+        return Promise.all([currentJob().catch(() => null), getStatus().catch(() => null)]);
+    },
+
+    loadProfiles: function() {
+        return listProfiles().then(data => this.updateProfiles(data)).catch(e =>
+            this.updateProfiles({ ok: false, error: e?.message || String(e) }));
     },
 
     badgeClass: function(value) {
@@ -104,9 +110,9 @@ return view.extend({
     updateButtons: function() {
         let id = this.selector?.value;
         let locked = this.busy || this.testing;
-        if (this.applyButton) this.applyButton.disabled = locked || !this.canApply(id);
-        if (this.testButton) this.testButton.disabled = locked || !this.canTest(id);
-        if (this.testAllButton) this.testAllButton.disabled = locked || !this.profiles.some(p => p.compatible === true);
+        if (this.applyButton) this.applyButton.disabled = locked || !this.profilesLoaded || !this.canApply(id);
+        if (this.testButton) this.testButton.disabled = locked || !this.profilesLoaded || !this.canTest(id);
+        if (this.testAllButton) this.testAllButton.disabled = locked || !this.profilesLoaded || !this.profiles.some(p => p.compatible === true);
         if (this.cancelButton) this.cancelButton.disabled = !this.testing || !this.activeJob;
         if (this.flowsealUpdateButton) this.flowsealUpdateButton.disabled = locked;
         for (let button of (this.rowLockButtons || [])) button.disabled = locked;
@@ -126,11 +132,15 @@ return view.extend({
 
     updateProfiles: function(data) {
         if (!data?.ok) {
-            this.active.textContent = _('Unable to load profiles: %s').format(data?.error || 'unknown_error');
+            this.profilesLoaded = false;
+            let message = _('Unable to load profiles: %s').format(data?.error || 'unknown_error');
+            this.active.textContent = message;
             this.profiles = [];
+            this.resultsBody?.replaceChildren(E('tr', {}, E('td', { 'colspan': 10, 'class': 'owz-loading-cell' }, message)));
             this.updateButtons();
             return;
         }
+        this.profilesLoaded = true;
         this.profiles = data.profiles || [];
         let selected = this.selectedProfileId || data.active_profile || '__manual__';
         this.selector.replaceChildren();
@@ -376,8 +386,10 @@ return view.extend({
         let current = Number(data.current ?? data.index ?? 0), total = Number(data.total || 0);
         let profileId = data.profile_id || data.current_profile;
         let label = profileId ? ' — ' + this.profileLabel(profileId) : '';
-        let percent = total > 0 ? Math.min(100, Math.round(current * 100 / total)) : 0;
-        this.jobProgress.value = percent;
+        let percent = total > 0 ? Math.max(0, Math.min(100, Math.round(current * 100 / total))) : 0;
+        let filled = Math.round(percent * 24 / 100);
+        this.jobProgress.textContent = '[' + '#'.repeat(filled) + '.'.repeat(24 - filled) + ']';
+        this.jobProgress.setAttribute('aria-valuenow', percent);
         this.jobPercent.textContent = percent + '%';
         this.jobProgressRow.hidden = this.isTerminal(data.status);
         if (data.mode == 'flowseal_update') {
@@ -582,15 +594,16 @@ return view.extend({
     },
 
     render: function(data) {
-        this.active = this.badge(_('Manual / Settings'));
+        this.active = this.badge(_('Loading strategies…'));
         this.stateBadge = this.badge('ERROR');
         this.selector = E('select', { 'change': L.bind(this.selectProfile, this) });
+        this.selector.appendChild(E('option', { value: '' }, _('Loading strategies…')));
         this.applyButton = E('button', { 'class': 'btn cbi-button-apply', 'click': L.bind(this.applySelected, this, null) }, _('Apply'));
-        this.testButton = E('button', { 'class': 'btn cbi-button-action', 'click': L.bind(this.startTesting, this, false) }, _('Test Strategy'));
+        this.testButton = E('button', { 'class': 'btn cbi-button-action', 'click': L.bind(this.startTesting, this, false) }, _('Test Selected'));
         this.testAllButton = E('button', { 'class': 'btn cbi-button-action', 'click': L.bind(this.startTesting, this, true) }, _('Test All'));
         this.cancelButton = E('button', { 'class': 'btn cbi-button-negative', 'click': L.bind(this.cancelTesting, this) }, _('Cancel'));
         this.jobText = E('span', _('None'));
-        this.jobProgress = E('progress', { 'max': 100, 'value': 0 });
+        this.jobProgress = E('span', { 'class': 'owz-ascii-progress', 'role': 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': 0 }, '[........................]');
         this.jobPercent = E('span', '0%');
         this.jobProgressRow = E('div', { 'class': 'owz-job-progress' }, [this.jobProgress, this.jobPercent, this.cancelButton]);
         this.jobProgressRow.hidden = true;
@@ -601,9 +614,10 @@ return view.extend({
         this.resultsBody = E('tbody');
 
         let page = E('div', [
-            E('h2', _('Strategies')),
             E('div', { 'class': 'owz-top-layout' }, [
+            E('div', { 'class': 'owz-top-column' }, [
             E('div', { 'class': 'cbi-section owz-control-section' }, [
+                E('h2', _('Strategies')),
                 E('div', { 'class': 'owz-status-line' }, [
                     E('span', [ _('Active:'), ' ', this.active ]),
                     E('span', [ _('State:'), ' ', this.stateBadge ])
@@ -612,18 +626,26 @@ return view.extend({
                     E('label', { 'class': 'cbi-value-title' }, _('Strategy')),
                     E('div', { 'class': 'cbi-value-field' }, this.selector)
                 ]),
-                E('div', { 'class': 'owz-actions' }, [this.testButton, this.applyButton]),
-                E('div', { 'class': 'cbi-value' }, [
-                    E('label', { 'class': 'cbi-value-title' }, _('Job')),
-                    E('div', { 'class': 'cbi-value-field' }, [this.jobText, this.jobProgressRow])
-                ]),
-                E('p', { 'class': 'cbi-value-description' }, _('Tests temporarily activate a strategy, check HTTPS from the router, and restore the previous configuration. LAN client traffic may differ.'))
+                E('div', { 'class': 'owz-actions' }, [this.applyButton, this.testButton])
             ]),
-            E('div', { 'class': 'cbi-section owz-updates-section' }, [
-                E('div', { 'class': 'owz-section-heading' }, [
-                    E('h3', _('Updates')),
-                    E('a', { 'href': L.url('admin/services/zapret2/import'), 'class': 'owz-import-link' }, _('Import your strategy'))
+            E('p', { 'class': 'cbi-value-description owz-strategy-note' }, _('Tests temporarily activate a strategy, check HTTPS from the router, and restore the previous configuration. LAN client traffic may differ.')),
+            E('div', { 'class': 'owz-job-panel' }, [
+                E('div', { 'class': 'owz-job-line' }, [
+                    E('span', { 'class': 'owz-job-prompt' }, '$'),
+                    E('span', { 'class': 'owz-job-label' }, _('Job') + ':'),
+                    this.jobText
                 ]),
+                this.jobProgressRow
+            ])
+            ]),
+            E('div', { 'class': 'owz-top-column' }, [
+            E('div', { 'class': 'cbi-section owz-updates-section' }, [
+                E('div', { 'class': 'owz-updates-header' }, [
+                    E('h2', _('Updates')),
+                    this.flowsealUpdateButton
+                ]),
+                E('div', { 'class': 'owz-updates-body' }, [
+                E('div', { 'class': 'owz-updates-values' }, [
                 E('div', { 'class': 'cbi-value' }, [
                     E('label', { 'class': 'cbi-value-title' }, _('Local')),
                     E('div', { 'class': 'cbi-value-field' }, this.flowsealLocal)
@@ -635,13 +657,21 @@ return view.extend({
                 E('div', { 'class': 'cbi-value' }, [
                     E('label', { 'class': 'cbi-value-title' }, _('Status')),
                     E('div', { 'class': 'cbi-value-field' }, this.flowsealSummary)
+                ])
                 ]),
-                E('div', { 'class': 'owz-actions' }, [this.flowsealUpdateButton, this.testAllButton]),
-                E('p', { 'class': 'cbi-value-description' }, _('Source: Flowseal. Strategy BAT files are imported as inert data and are never executed. Windows executables are never run, and updating never changes the active strategy automatically.'))
+                E('div', { 'class': 'owz-import-action' },
+                    E('a', { 'href': L.url('admin/services/zapret2/import'), 'class': 'btn cbi-button-apply owz-import-button' }, _('Import your strategy'))
+                )
+                ])
+            ]),
+            E('p', { 'class': 'cbi-value-description owz-source-note' }, _('Source: Flowseal. Strategy BAT files are imported as inert data and are never executed. Windows executables are never run, and updating never changes the active strategy automatically.'))
             ])
             ]),
-            E('div', { 'class': 'cbi-section' }, [
-                E('h3', _('Test results')),
+            E('div', { 'class': 'cbi-section owz-tests-section' }, [
+                E('div', { 'class': 'owz-section-heading' }, [
+                    E('h2', _('Tests')),
+                    this.testAllButton
+                ]),
                 E('div', { 'class': 'owz-results-wrap' }, [
                     E('table', { 'class': 'table owz-results-table' }, [
                         E('colgroup', {}, [
@@ -672,10 +702,9 @@ return view.extend({
             ])
         ]);
 
-        let profiles = data?.[0] || {};
-        let job = data?.[1] || {};
-        this.setRuntimeState(data?.[2]);
-        this.updateProfiles(profiles);
+        let job = data?.[0] || {};
+        this.setRuntimeState(data?.[1]);
+        this.resultsBody.appendChild(E('tr', {}, E('td', { 'colspan': 10, 'class': 'owz-loading-cell' }, _('Loading strategies…'))));
         if (job?.job_id) {
             this.activeJob = job.job_id;
             this.testing = !this.isTerminal(job.status);
@@ -684,13 +713,15 @@ return view.extend({
         this.updateButtons();
         this.lastIdleRefresh = Date.now();
 
-        // Updates не блокируют первый render страницы.
-        flowsealStatus().then(status => {
-            this.updateFlowsealInfo(status);
-            if (!this.testing) this.checkFlowseal(true);
-        }).catch(() => {
-            this.updateFlowsealInfo({ ok: false, error: 'unavailable' });
-            if (!this.testing) this.checkFlowseal(true);
+        // Загрузка профилей и Updates не блокирует первый render; запросы идут по очереди.
+        this.loadProfiles().then(() => {
+            flowsealStatus().then(status => {
+                this.updateFlowsealInfo(status);
+                if (!this.testing) this.checkFlowseal(true);
+            }).catch(() => {
+                this.updateFlowsealInfo({ ok: false, error: 'unavailable' });
+                if (!this.testing) this.checkFlowseal(true);
+            });
         });
 
         poll.add(L.bind(this.refreshJob, this), 2);

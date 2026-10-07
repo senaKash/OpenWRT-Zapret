@@ -15,7 +15,8 @@ function E(tag, attrs, content) {
     return {
         tag, attrs: attrs || {}, children,
         appendChild(child) { this.children.push(child); },
-        replaceChildren(...items) { this.children = items; }
+        replaceChildren(...items) { this.children = items; },
+        setAttribute(name, value) { this.attrs[name] = value; }
     };
 }
 function find(node, tag) {
@@ -34,7 +35,7 @@ const context = {
     poll: { add: () => {} }
 };
 const page = vm.runInNewContext(`(function(){String.prototype.format = function(...args) { let i = 0; return this.replace(/%[ds]/g, () => String(args[i++])); }; ${code}\n})()`, context);
-assert.equal(stylesheet.attrs.href, 'view/zapret2/strategies.css?v=21');
+assert.equal(stylesheet.attrs.href, 'view/zapret2/strategies.css?v=23');
 page.updateProfiles = function(data) { this.profiles = data.profiles; this.updateActiveProfile(data.active_profile); this.renderResults(); };
 page.updateFlowsealInfo = () => {};
 page.updateButtons = () => {};
@@ -45,16 +46,26 @@ const oldResult = {
     tests: { youtube: { status: 'SKIP' }, googlevideo: { status: 'PASS' }, discord: { status: 'SKIP' }, discord_media: { status: 'PASS' }, discord_voice_udp: { status: 'PASS' } }
 };
 const profile = { id: 'flowseal-general-alt12', name: 'general (ALT12)', compatible: true, content_hash: 'sha256:alt12', source_version: '1.10.3', latest_result: oldResult };
-const dom = page.render([{ ok: true, profiles: [profile], active_profile: profile.id }, {}, {
+page.loadProfiles = () => {
+    page.updateProfiles({ ok: true, profiles: [profile], active_profile: profile.id });
+    return Promise.resolve();
+};
+const dom = page.render([{}, {
     running: true, daemon: true, firewall: true, nfqueue: true, partial: false
 }]);
 const table = find(dom, 'table')[0];
 const topLayout = find(dom, 'div').find(node => node.attrs.class === 'owz-top-layout');
-assert.equal(dom.children[1], topLayout);
-assert.equal(topLayout.children[0].attrs.class, 'cbi-section owz-control-section');
-assert.equal(topLayout.children[1].attrs.class, 'cbi-section owz-updates-section');
+assert.equal(dom.children[0], topLayout);
+assert.equal(topLayout.children[0].attrs.class, 'owz-top-column');
+assert.equal(topLayout.children[1].attrs.class, 'owz-top-column');
+assert.equal(topLayout.children[0].children[0].attrs.class, 'cbi-section owz-control-section');
+assert.equal(topLayout.children[1].children[0].attrs.class, 'cbi-section owz-updates-section');
 assert.equal(find(topLayout.children[1], 'a')[0].children[0], 'Import your strategy');
-assert.equal(find(dom.children[2], 'table')[0], table);
+assert.equal(find(topLayout.children[1], 'a')[0].attrs.class.includes('cbi-button-apply'), true);
+assert.equal(find(topLayout.children[0], 'span').some(node => node.children[0] === '$'), true);
+assert.equal(find(dom.children[1], 'table')[0], table);
+assert.equal(find(dom.children[1], 'h2')[0].children[0], 'Tests');
+assert.equal(find(dom.children[1], 'button')[0].children[0], 'Test All');
 const headers = find(find(table, 'thead')[0], 'th');
 assert.deepEqual(headers.map(header => header.children[0]),
     ['#', 'Lock', 'Strategy', 'Result', 'YouTube', 'Discord', 'Cloudflare', 'GitHub', 'Tested', 'Action']);
@@ -106,7 +117,8 @@ assert.equal(find(table, 'thead').length, 1);
 const row = page.resultRows[profile.id].row;
 page.showJob({ job_id: '1-2', status: 'RUNNING', stage: 'testing', profile_id: profile.id, current: 17, total: 21 });
 cells = find(page.resultsBody, 'td');
-assert.equal(page.jobProgress.value, 81);
+assert.equal(page.jobProgress.textContent, '[###################.....]');
+assert.equal(page.jobProgress.attrs['aria-valuenow'], 81);
 assert.equal(page.jobPercent.textContent, '81%');
 assert.equal(page.jobProgressRow.hidden, false);
 assert.equal(page.jobText.textContent.includes('17 / 21'), true);

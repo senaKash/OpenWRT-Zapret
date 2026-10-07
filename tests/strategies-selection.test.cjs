@@ -68,7 +68,11 @@ page.renderResults = () => {};
 page.showJob = () => {};
 
 (async () => {
-    page.updateProfiles(listing);
+    const initial = await page.load();
+    assert.equal(initial.length, 2);
+    assert.equal(calls.filter(call => call[0] === 'list_profiles').length, 0);
+    await page.loadProfiles();
+    assert.equal(calls.filter(call => call[0] === 'list_profiles').length, 1);
     assert.equal(page.selector.value, '__manual__');
     const compatible = page.selector.options.find(option => option.attrs.value === 'flowseal-general-alt');
     const incompatible = page.selector.options.find(option => option.attrs.value === 'flowseal-broken');

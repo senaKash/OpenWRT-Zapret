@@ -9,7 +9,7 @@
 .owz-actions { margin: .5rem 0 1rem; }
 .owz-job-progress { margin-top: .4rem; }
 .owz-job-progress[hidden] { display: none; }
-.owz-job-progress progress { width: 18rem; max-width: 100%; }
+.owz-ascii-progress { white-space: pre; color: #7bc987; }
 
 .owz-badge {
     display: inline-block;
@@ -29,16 +29,51 @@
 
 .owz-top-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1.4fr) minmax(18rem, .9fr);
-    gap: 1rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2rem;
     align-items: start;
-    margin-bottom: .6rem;
+    margin-bottom: .75rem;
 }
 
-.owz-top-layout > .cbi-section { min-width: 0; margin-bottom: 0; }
+.owz-top-column { min-width: 0; }
+.owz-top-column > .cbi-section {
+    min-width: 0;
+    margin: 0;
+    padding: .75rem 1rem;
+    border: 1px solid rgba(127, 127, 127, .28);
+    border-radius: 4px;
+}
+.owz-top-column h2 { margin: 0 0 .75rem; }
+.owz-top-column .cbi-value { margin-bottom: .35rem; }
+.owz-top-column .owz-actions { margin: .65rem 0 0; }
+.owz-updates-header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; }
+.owz-updates-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 1rem; }
+.owz-import-button { white-space: nowrap; }
+.owz-strategy-note, .owz-source-note { margin: .6rem 0; }
+
+.owz-job-panel {
+    padding: .7rem .85rem;
+    border: 1px solid #48574e;
+    border-radius: 4px;
+    background: #1c2224;
+    color: #d6e5d8;
+    font: .9rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.owz-job-line { display: flex; flex-wrap: wrap; gap: .45rem; }
+.owz-job-prompt { color: #7bc987; }
+.owz-job-label { color: #aebeb1; }
+.owz-job-panel .owz-job-progress { gap: .5rem .8rem; }
+.owz-loading-cell { padding: .75rem; opacity: .7; }
+.owz-tests-section { margin-top: .5rem; }
+.owz-tests-section .owz-section-heading { margin-bottom: .5rem; }
+.owz-tests-section .owz-section-heading h2 { margin: 0; }
 
 @media (max-width: 800px) {
     .owz-top-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 480px) {
+    .owz-updates-body { grid-template-columns: minmax(0, 1fr); }
 }
 
 
@@ -180,8 +215,7 @@
     width: 100%;
 }
 
-.owz-section-heading h3 { margin-right: auto; }
-.owz-import-link { white-space: nowrap; font-size: 1.02em; font-weight: 600; text-decoration: underline; }
+.owz-section-heading h2 { margin-right: auto; }
 
 .owz-index-cell {
     text-align: center !important;
