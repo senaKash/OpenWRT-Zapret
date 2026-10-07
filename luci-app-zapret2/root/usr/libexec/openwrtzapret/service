@@ -625,7 +625,7 @@ owz_profile_delete() {
 }
 
 owz_profile_import_user() {
-	local data="$1" tmp out rc
+	local data="$1" tmp out
 	[ -n "$data" ] && [ "${#data}" -le 49152 ] || { printf '%s\n' '{"ok":false,"error":"strategy_too_large"}'; return 0; }
 	case "$data" in *[!A-Za-z0-9+/=]*) printf '%s\n' '{"ok":false,"error":"invalid_strategy_encoding"}'; return 0;; esac
 	if ! owz_lock profile_import_user; then printf '%s\n' '{"ok":false,"error":"busy"}'; return 0; fi
@@ -633,9 +633,10 @@ owz_profile_import_user() {
 	chmod 600 "$tmp"
 	if ! printf '%s' "$data" | /bin/busybox base64 -d > "$tmp" 2>/dev/null; then rm -f "$tmp"; printf '%s\n' '{"ok":false,"error":"invalid_strategy_encoding"}'; return 0; fi
 	[ "$(wc -c < "$tmp" 2>/dev/null)" -le 32768 ] || { rm -f "$tmp"; printf '%s\n' '{"ok":false,"error":"strategy_too_large"}'; return 0; }
-	out=$("$OWZ_FLOWSEAL_UPDATE" import-user "$tmp" 2>/dev/null); rc=$?
+	out=$("$OWZ_FLOWSEAL_UPDATE" import-user "$tmp" 2>/dev/null)
 	rm -f "$tmp"
-	[ "$rc" -eq 0 ] && [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
+	# import-user returns structured errors with a non-zero exit status; preserve them for LuCI.
+	[ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
 	printf '%s\n' '{"ok":false,"error":"import_failed"}'
 }
 
@@ -850,11 +851,11 @@ owz_job_test_one() {
 	# Кандидат полностью останавливается до перехода к следующему профилю.
 	if ! owz_job_stop_runtime; then
 		owz_profile_result_write "$dir" "$id" "$name" "$hash" "$version" ERROR "$tests" false candidate_stop_failed || return 2
-		printf '%s\n' "$id" >> "$dir/completed"
+		printf '%s\n' "$id" >> "$dir/completed" || return 1
 		return 2
 	fi
 	owz_profile_result_write "$dir" "$id" "$name" "$hash" "$version" "$status" "$tests" false "$reason" || return 1
-	printf '%s\n' "$id" >> "$dir/completed"
+	printf '%s\n' "$id" >> "$dir/completed" || return 1
 	return 0
 }
 
@@ -976,7 +977,7 @@ worker_pid=0
 }
 
 owz_job_run() {
-	local job="$1" dir mode total index=0 id rc final=DONE final_error=''
+	local job="$1" dir mode total index=0 completed=0 id rc final=DONE final_error=''
 	owz_valid_job_id "$job" || exit 64
 	dir="$OWZ_JOB_ROOT/$job"; [ -d "$dir" ] && [ ! -L "$dir" ] || exit 66
 	if ! owz_lock job_run; then exit 75; fi
@@ -1007,8 +1008,12 @@ owz_job_run() {
 			[ -n "$id" ] || continue
 			if [ -e "$dir/cancel" ]; then final=CANCELLED; final_error=cancelled; break; fi
 			index=$((index + 1))
-			owz_job_state_write "$dir" "$job" "$mode" RUNNING testing "$id" "$index" "$total" ''
+			owz_job_state_write "$dir" "$job" "$mode" RUNNING testing "$id" "$completed" "$total" ''
 			owz_job_test_one "$dir" "$id"; rc=$?
+			if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
+				completed=$index
+				owz_job_state_write "$dir" "$job" "$mode" RUNNING result "$id" "$completed" "$total" ''
+			fi
 			if [ "$rc" -eq 2 ]; then final=ERROR; final_error=candidate_stop_failed; break
 			elif [ "$rc" -ne 0 ]; then final=ERROR; final_error=result_write_failed; break; fi
 			if [ -e "$dir/cancel" ]; then final=CANCELLED; final_error=cancelled; break; fi
@@ -1017,22 +1022,22 @@ owz_job_run() {
 		final=ERROR; final_error=original_stop_failed
 	fi
 	# При DONE, CANCELLED и ERROR восстанавливаем snapshot один раз.
-	owz_job_state_write "$dir" "$job" "$mode" RUNNING restoring '' "$index" "$total" ''
+	owz_job_state_write "$dir" "$job" "$mode" RUNNING restoring '' "$completed" "$total" ''
 	if ! owz_job_snapshot_restore "$dir"; then final=ERROR; final_error=recovery_failed
 	elif ! owz_job_mark_restored "$dir"; then final=ERROR; final_error=result_write_failed; fi
 	if [ "$final" = ERROR ] && [ "$final_error" = recovery_failed ]; then
-		owz_job_state_write "$dir" "$job" "$mode" ERROR recovery_failed '' "$index" "$total" "$final_error"
+		owz_job_state_write "$dir" "$job" "$mode" ERROR recovery_failed '' "$completed" "$total" "$final_error"
 		owz_job_build_result "$dir" "$job" "$mode" ERROR "$final_error" || :
 		return 0
 	fi
-	owz_job_state_write "$dir" "$job" "$mode" "$final" complete '' "$index" "$total" "$final_error"
+	owz_job_state_write "$dir" "$job" "$mode" "$final" complete '' "$completed" "$total" "$final_error"
 	owz_job_build_result "$dir" "$job" "$mode" "$final" "$final_error" || :
 	if [ "$(owz_job_active_id 2>/dev/null)" = "$job" ]; then rm -f "$OWZ_JOURNAL/active"; fi
 	rm -f "$dir/snapshot/config" "$dir/snapshot/meta" 2>/dev/null; rmdir "$dir/snapshot" 2>/dev/null || :
 }
 
 owz_job_recover() {
-	local job="$1" dir mode total
+	local job="$1" dir mode total completed
 	owz_valid_job_id "$job" || exit 64
 	dir="$OWZ_JOB_ROOT/$job"; [ -d "$dir" ] && [ ! -L "$dir" ] || exit 66
 	if ! owz_lock job_recover; then printf '%s
@@ -1052,9 +1057,10 @@ owz_job_recover() {
 	case "$mode" in profile|all) :;; *) printf '%s
 ' '{"ok":false,"error":"invalid_job_mode"}'; return 0;; esac
 	total=$(awk 'NF{n++} END{print n+0}' "$dir/profiles" 2>/dev/null)
+	completed=$(awk 'NF{n++} END{print n+0}' "$dir/completed" 2>/dev/null)
 	if owz_job_snapshot_restore "$dir"; then
 		owz_job_mark_restored "$dir" || :
-		owz_job_state_write "$dir" "$job" "$mode" RECOVERED recovered '' 0 "$total" worker_lost
+		owz_job_state_write "$dir" "$job" "$mode" RECOVERED recovered '' "$completed" "$total" worker_lost
 		owz_job_build_result "$dir" "$job" "$mode" RECOVERED worker_lost || :
 		[ "$(owz_job_active_id 2>/dev/null)" = "$job" ] && rm -f "$OWZ_JOURNAL/active"
 		rm -f "$dir/snapshot/config" "$dir/snapshot/meta" 2>/dev/null
@@ -1062,7 +1068,7 @@ owz_job_recover() {
 		printf '{"ok":true,"job_id":"%s","status":"RECOVERED"}
 ' "$job"
 	else
-		owz_job_state_write "$dir" "$job" "$mode" ERROR recovery_failed '' 0 "$total" recovery_failed
+		owz_job_state_write "$dir" "$job" "$mode" ERROR recovery_failed '' "$completed" "$total" recovery_failed
 		: > "$dir/recovery_failed" 2>/dev/null || :
 		printf '{"ok":false,"job_id":"%s","error":"recovery_failed"}
 ' "$job"

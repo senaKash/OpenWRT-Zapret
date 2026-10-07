@@ -16,6 +16,28 @@ function encodeUtf8Base64(value) {
 return view.extend({
     busy: false,
 
+    loadBatFile: async function() {
+        let file = this.fileInput.files?.[0];
+        if (!file) return;
+        this.input.value = '';
+        if (file.size > 32768) {
+            ui.addNotification(null, E('p', _('Strategy is too large. Maximum size is 32 KiB.')));
+            return;
+        }
+        this.busy = true;
+        this.addButton.disabled = true;
+        try {
+            this.input.value = await file.text();
+        }
+        catch (e) {
+            ui.addNotification(null, E('p', _('Unable to read BAT file: %s').format(e.message || e)));
+        }
+        finally {
+            this.busy = false;
+            this.addButton.disabled = false;
+        }
+    },
+
     addStrategy: async function() {
         if (this.busy) return;
         let text = this.input.value || '';
@@ -48,6 +70,10 @@ return view.extend({
     },
 
     render: function() {
+        this.fileInput = E('input', {
+            'type': 'file', 'accept': '.bat',
+            'change': L.bind(this.loadBatFile, this)
+        });
         this.input = E('textarea', {
             'class': 'cbi-input-textarea', 'rows': 16,
             'placeholder': _('Paste the contents of a Flowseal strategy BAT file here')
@@ -58,8 +84,12 @@ return view.extend({
         }, _('Add'));
         return E('div', [
             E('h2', _('Import Strategy')),
-            E('p', { 'class': 'cbi-value-description' }, _('The pasted BAT text is treated only as data and is never executed. It is converted by the existing Flowseal importer and validated by zapret2 before being saved.')),
+            E('p', { 'class': 'cbi-value-description' }, _('Choose a Flowseal general*.bat file or paste its contents. Update Strategies must install Flowseal assets first. BAT text is converted as data and never executed.')),
             E('div', { 'class': 'cbi-section' }, [
+                E('div', { 'class': 'cbi-value' }, [
+                    E('label', { 'class': 'cbi-value-title' }, _('BAT file')),
+                    E('div', { 'class': 'cbi-value-field' }, this.fileInput)
+                ]),
                 E('div', { 'class': 'cbi-value' }, [
                     E('label', { 'class': 'cbi-value-title' }, _('Strategy text')),
                     E('div', { 'class': 'cbi-value-field' }, this.input)

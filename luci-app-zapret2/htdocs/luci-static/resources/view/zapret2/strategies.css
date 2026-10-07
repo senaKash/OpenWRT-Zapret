@@ -9,6 +9,7 @@
 .owz-actions { margin: .5rem 0 1rem; }
 .owz-job-progress { margin-top: .4rem; }
 .owz-job-progress[hidden] { display: none; }
+.owz-job-progress .btn[hidden] { display: none; }
 .owz-ascii-progress { white-space: pre; color: #7bc987; }
 
 .owz-badge {
@@ -47,8 +48,26 @@
 .owz-top-column .cbi-value { margin-bottom: .35rem; }
 .owz-top-column .owz-actions { margin: .65rem 0 0; }
 .owz-updates-header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; }
+.owz-header-actions, .owz-title-help { display: flex; align-items: center; gap: .5rem; }
+.owz-header-actions { margin-left: auto; }
 .owz-updates-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 1rem; }
+.owz-import-action { text-align: right; }
 .owz-import-button { white-space: nowrap; }
+.owz-help-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.15rem;
+    height: 1.15rem;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    color: #2995c7;
+    font-size: .75rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: help;
+}
+.owz-help-icon:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .owz-strategy-note, .owz-source-note { margin: .6rem 0; }
 
 .owz-job-panel {
@@ -215,7 +234,7 @@
     width: 100%;
 }
 
-.owz-section-heading h2 { margin-right: auto; }
+.owz-section-heading > .btn { margin-left: auto; }
 
 .owz-index-cell {
     text-align: center !important;

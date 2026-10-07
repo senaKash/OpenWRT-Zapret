@@ -24,7 +24,7 @@ const deleteProfile = rpc.declare({ object: 'openwrtzapret', method: 'delete_pro
 
 document.head.appendChild(E('link', {
     rel: 'stylesheet',
-    href: L.resource('view/zapret2/strategies.css') + '?v=23'
+    href: L.resource('view/zapret2/strategies.css') + '?v=25'
 }));
 
 return view.extend({
@@ -64,6 +64,10 @@ return view.extend({
 
     badge: function(value, title) {
         return E('span', { 'class': this.badgeClass(value), 'title': title || '' }, value);
+    },
+
+    helpIcon: function(message) {
+        return E('span', { 'class': 'owz-help-icon', 'title': message, 'tabindex': 0, 'aria-label': message }, '?');
     },
 
     setRuntimeState: function(status) {
@@ -386,23 +390,38 @@ return view.extend({
         let current = Number(data.current ?? data.index ?? 0), total = Number(data.total || 0);
         let profileId = data.profile_id || data.current_profile;
         let label = profileId ? ' — ' + this.profileLabel(profileId) : '';
+        let scope = data.mode == 'all'
+            ? ' · ' + (this.profilesLoaded && this.profiles.length > total
+                ? _('%d of %d strategies compatible').format(total, this.profiles.length)
+                : _('compatible strategies only')) : '';
+        let complete = data.status == 'DONE' && current >= total;
         let percent = total > 0 ? Math.max(0, Math.min(100, Math.round(current * 100 / total))) : 0;
-        let filled = Math.round(percent * 24 / 100);
+        if (!complete) percent = Math.min(percent, 99);
+        let filled = Math.floor(percent * 24 / 100);
         this.jobProgress.textContent = '[' + '#'.repeat(filled) + '.'.repeat(24 - filled) + ']';
         this.jobProgress.setAttribute('aria-valuenow', percent);
         this.jobPercent.textContent = percent + '%';
-        this.jobProgressRow.hidden = this.isTerminal(data.status);
+        this.jobProgressRow.hidden = false;
+        this.cancelButton.hidden = this.isTerminal(data.status);
         if (data.mode == 'flowseal_update') {
             if (data.status == 'PENDING') this.jobText.textContent = _('Flowseal update queued');
             else if (data.status == 'RUNNING') this.jobText.textContent = _('Updating Flowseal strategies…');
             else this.jobText.textContent = _('Flowseal update: %s').format(data.status || 'UNKNOWN');
         }
         else if (data.status == 'RUNNING' && data.stage == 'testing')
-            this.jobText.textContent = _('Testing %d / %d').format(current, total) + label;
+            this.jobText.textContent = _('Completed %d / %d').format(current, total) +
+                (profileId ? ' · ' + _('Testing %s').format(this.profileLabel(profileId)) : '') + scope;
+        else if (data.status == 'RUNNING' && data.stage == 'result')
+            this.jobText.textContent = _('Completed %d / %d').format(current, total) + label + scope;
+        else if (data.status == 'RUNNING' && data.stage == 'restoring')
+            this.jobText.textContent = _('Restoring previous configuration') + ' · ' +
+                _('Completed %d / %d').format(current, total) + scope;
         else if (data.status == 'PENDING')
-            this.jobText.textContent = _('Queued') + (total > 0 ? ' · ' + total + ' ' + _('strategy tests') : '');
+            this.jobText.textContent = _('Queued') + (total > 0 ? ' · ' + total + ' ' + _('strategy tests') : '') + scope;
+        else if (data.status == 'DONE')
+            this.jobText.textContent = _('DONE') + ' · ' + _('Completed %d / %d').format(current, total) + scope;
         else
-            this.jobText.textContent = (data.status || 'UNKNOWN') + (total > 0 ? ' ' + current + '/' + total : '') + label + ' [' + (data.stage || 'unknown') + ']';
+            this.jobText.textContent = (data.status || 'UNKNOWN') + (total > 0 ? ' ' + current + '/' + total : '') + label + ' [' + (data.stage || 'unknown') + ']' + scope;
         this.updateStateBadge();
         let testing = data.status == 'RUNNING' && data.stage == 'testing' ? profileId : null;
         if (previous && previous != testing) this.updateResultRow(previous);
@@ -455,11 +474,10 @@ return view.extend({
             if (!state?.ok) return;
             let previousId = this.jobState?.profile_id || this.jobState?.current_profile;
             let completedPrevious = state.mode != 'flowseal_update' && this.jobState?.stage == 'testing' && previousId &&
-                (previousId != (state.profile_id || state.current_profile) || this.isTerminal(state.status));
+                (previousId != (state.profile_id || state.current_profile) || state.stage == 'result' || this.isTerminal(state.status));
 
-            // Сначала двигаем progress/TESTING-строку, затем дочитываем маленький result JSON.
-            this.showJob(state);
-            this.testing = !this.isTerminal(state.status);
+            let terminal = this.isTerminal(state.status);
+            if (!terminal) this.showJob(state);
             if (completedPrevious) {
                 try {
                     let completed = await getProfileResult(previousId);
@@ -468,11 +486,16 @@ return view.extend({
                 catch (e) { /* Следующий переход job повторит чтение результата. */ }
             }
 
-            if (!this.testing) {
+            if (terminal) {
                 let id = this.activeJob;
-                this.activeJob = null;
                 let result = await jobResult(id);
+                if (state.status == 'DONE' && (!result?.ok ||
+                    (state.mode != 'flowseal_update' && (!Array.isArray(result.results) ||
+                        result.results.length < Number(state.total || 0))))) return;
+                this.activeJob = null;
+                this.testing = false;
                 if (state.mode == 'flowseal_update') {
+                    this.showJob(state);
                     if (result?.ok && result.status == 'DONE') {
                         let c = result.report?.counts || {};
                         ui.addNotification(null, E('p', _('Flowseal updated: added %d, changed %d, unchanged %d, unsupported %d.').format(Number(c.added || 0), Number(c.changed || 0), Number(c.unchanged || 0), Number(c.unsupported || 0))));
@@ -486,6 +509,10 @@ return view.extend({
                     this.updateProfiles(await listProfiles());
                 }
                 else {
+                    if (Array.isArray(result?.results))
+                        for (let completed of result.results)
+                            this.updateProfileResult(completed.profile_id, completed);
+                    this.showJob(state);
                     if (result?.ok && result.status == 'ERROR')
                         ui.addNotification(null, E('p', _('Strategy test recovery failed: %s').format(result.error || 'unknown_error')));
                     else if (result?.ok && result.status == 'RECOVERED')
@@ -495,6 +522,7 @@ return view.extend({
                 await this.refreshRuntimeAndActive();
                 this.lastIdleRefresh = Date.now();
             }
+            else this.testing = true;
             this.updateButtons();
         }
         catch (e) { /* polling retries */ }
@@ -617,7 +645,7 @@ return view.extend({
             E('div', { 'class': 'owz-top-layout' }, [
             E('div', { 'class': 'owz-top-column' }, [
             E('div', { 'class': 'cbi-section owz-control-section' }, [
-                E('h2', _('Strategies')),
+                E('h2', _('Selected Strategy')),
                 E('div', { 'class': 'owz-status-line' }, [
                     E('span', [ _('Active:'), ' ', this.active ]),
                     E('span', [ _('State:'), ' ', this.stateBadge ])
@@ -642,7 +670,10 @@ return view.extend({
             E('div', { 'class': 'cbi-section owz-updates-section' }, [
                 E('div', { 'class': 'owz-updates-header' }, [
                     E('h2', _('Updates')),
-                    this.flowsealUpdateButton
+                    E('div', { 'class': 'owz-header-actions' }, [
+                        this.helpIcon(_('Update Strategies imports supported strategies from Flowseal. It never changes the active strategy automatically.')),
+                        this.flowsealUpdateButton
+                    ])
                 ]),
                 E('div', { 'class': 'owz-updates-body' }, [
                 E('div', { 'class': 'owz-updates-values' }, [
@@ -664,12 +695,19 @@ return view.extend({
                 )
                 ])
             ]),
-            E('p', { 'class': 'cbi-value-description owz-source-note' }, _('Source: Flowseal. Strategy BAT files are imported as inert data and are never executed. Windows executables are never run, and updating never changes the active strategy automatically.'))
+            E('p', { 'class': 'cbi-value-description owz-source-note' }, [
+                _('You can import a general*.bat strategy from '),
+                E('a', { 'href': 'https://github.com/Flowseal/zapret-discord-youtube', 'target': '_blank', 'rel': 'noopener noreferrer' }, 'Flowseal/zapret-discord-youtube'),
+                _('. Choose the BAT file on Import Strategy or paste its contents. The BAT is read as data and never executed.')
+            ])
             ])
             ]),
             E('div', { 'class': 'cbi-section owz-tests-section' }, [
                 E('div', { 'class': 'owz-section-heading' }, [
-                    E('h2', _('Tests')),
+                    E('div', { 'class': 'owz-title-help' }, [
+                        E('h2', _('Strategies')),
+                        this.helpIcon(_('Lock protects a strategy from deletion and from being replaced or removed by Update Strategies. Test All includes compatible strategies only.'))
+                    ]),
                     this.testAllButton
                 ]),
                 E('div', { 'class': 'owz-results-wrap' }, [
@@ -694,7 +732,7 @@ return view.extend({
                             E('th', { 'class': 'owz-probe-cell' }, _('YouTube')), E('th', { 'class': 'owz-probe-cell' }, _('Discord')),
                             E('th', { 'class': 'owz-probe-cell' }, _('Cloudflare')), E('th', { 'class': 'owz-probe-cell' }, _('GitHub')),
                             E('th', { 'class': 'owz-sortable', 'click': L.bind(this.setSort, this, 'tested'), 'title': _('Sort') }, _('Tested')),
-                            E('th', { 'class': 'owz-action-cell' }, _('Action'))
+                            E('th', { 'class': 'owz-action-cell' }, _('Del'))
                         ]) ]),
                         this.resultsBody
                     ])

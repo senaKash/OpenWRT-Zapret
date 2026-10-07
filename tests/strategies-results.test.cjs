@@ -35,7 +35,7 @@ const context = {
     poll: { add: () => {} }
 };
 const page = vm.runInNewContext(`(function(){String.prototype.format = function(...args) { let i = 0; return this.replace(/%[ds]/g, () => String(args[i++])); }; ${code}\n})()`, context);
-assert.equal(stylesheet.attrs.href, 'view/zapret2/strategies.css?v=23');
+assert.equal(stylesheet.attrs.href, 'view/zapret2/strategies.css?v=25');
 page.updateProfiles = function(data) { this.profiles = data.profiles; this.updateActiveProfile(data.active_profile); this.renderResults(); };
 page.updateFlowsealInfo = () => {};
 page.updateButtons = () => {};
@@ -60,15 +60,19 @@ assert.equal(topLayout.children[0].attrs.class, 'owz-top-column');
 assert.equal(topLayout.children[1].attrs.class, 'owz-top-column');
 assert.equal(topLayout.children[0].children[0].attrs.class, 'cbi-section owz-control-section');
 assert.equal(topLayout.children[1].children[0].attrs.class, 'cbi-section owz-updates-section');
+assert.equal(find(topLayout.children[0], 'h2')[0].children[0], 'Selected Strategy');
 assert.equal(find(topLayout.children[1], 'a')[0].children[0], 'Import your strategy');
 assert.equal(find(topLayout.children[1], 'a')[0].attrs.class.includes('cbi-button-apply'), true);
+assert.equal(find(topLayout.children[1], 'button')[0].children[0], 'Update Strategies');
+assert.equal(find(topLayout.children[1], 'span').some(node => node.children[0] === '?' && node.attrs.title.includes('Flowseal')), true);
 assert.equal(find(topLayout.children[0], 'span').some(node => node.children[0] === '$'), true);
 assert.equal(find(dom.children[1], 'table')[0], table);
-assert.equal(find(dom.children[1], 'h2')[0].children[0], 'Tests');
+assert.equal(find(dom.children[1], 'h2')[0].children[0], 'Strategies');
+assert.equal(find(dom.children[1], 'span').some(node => node.children[0] === '?' && node.attrs.title.includes('Lock protects')), true);
 assert.equal(find(dom.children[1], 'button')[0].children[0], 'Test All');
 const headers = find(find(table, 'thead')[0], 'th');
 assert.deepEqual(headers.map(header => header.children[0]),
-    ['#', 'Lock', 'Strategy', 'Result', 'YouTube', 'Discord', 'Cloudflare', 'GitHub', 'Tested', 'Action']);
+    ['#', 'Lock', 'Strategy', 'Result', 'YouTube', 'Discord', 'Cloudflare', 'GitHub', 'Tested', 'Del']);
 
 assert.equal(table.attrs.class.includes('owz-results-table'), true);
 const colgroup = find(table, 'colgroup')[0];
@@ -152,6 +156,14 @@ page.updateProfileResult(profile.id, {
 assert.equal(page.resultRows[profile.id].row, firstRow);
 assert.equal(page.resultRows[profile.id].result.children[0].children[0], 'PASS');
 assert.equal(page.resultRows[next.id].result.children[0].children[0], 'TESTING');
+page.showJob({ job_id: '1-2', mode: 'all', status: 'RUNNING', stage: 'restoring', current: 17, total: 17 });
+assert.equal(page.jobPercent.textContent, '99%');
+assert.equal(page.jobProgress.textContent, '[' + '#'.repeat(23) + '.]');
+assert.equal(page.jobProgressRow.hidden, false);
+page.showJob({ job_id: '1-2', mode: 'all', status: 'DONE', stage: 'complete', current: 17, total: 17 });
+assert.equal(page.jobPercent.textContent, '100%');
+assert.equal(page.jobProgress.textContent, '[' + '#'.repeat(24) + ']');
+assert.equal(page.cancelButton.hidden, true);
 page.showJob(null);
 assert.equal(page.active.className, 'owz-badge owz-badge-pass');
 page.updateActiveProfile(next.id);
@@ -161,4 +173,10 @@ page.setSort('name');
 assert.equal(page.resultsBody.children[0].children[0].children[0], '1');
 assert.equal(page.resultsBody.children[0].children[2].children[0], 'general (ALT13)');
 assert.equal(page.resultsBody.children[1].children[0].children[0], '2');
+page.showJob({ job_id: '2-3', mode: 'all', status: 'RUNNING', stage: 'testing', profile_id: profile.id, current: 0, total: 2 });
+assert.equal(page.jobPercent.textContent, '0%');
+assert.equal(page.jobText.textContent.includes('Completed 0 / 2'), true);
+page.showJob({ job_id: '2-3', mode: 'all', status: 'RUNNING', stage: 'result', profile_id: profile.id, current: 1, total: 2 });
+assert.equal(page.jobPercent.textContent, '50%');
+assert.equal(page.resultRows[profile.id].row.className, '');
 console.log('Strategies result compatibility and table headers passed');

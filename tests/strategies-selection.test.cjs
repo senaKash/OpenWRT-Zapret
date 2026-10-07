@@ -24,7 +24,9 @@ const replies = {
     status: () => ({ ok: true, running: true, daemon: true, firewall: true, nfqueue: true, partial: false }),
     current_job: () => ({ ok: true, job_id: null }),
     job_status: () => jobReply,
-    job_result: () => ({ ok: true, status: 'DONE' }),
+    job_result: () => ({ ok: true, status: 'DONE', results: [
+        { profile_id: 'flowseal-one' }, { profile_id: 'flowseal-two' }, { profile_id: 'flowseal-next' }
+    ] }),
     get_profile_result: id => ({ ok: true, result: { profile_id: id, content_hash: 'sha256:alt', source_version: '1', status: 'PASS', tested_at: 1 } }),
     set_profile_lock: (id, locked) => lockFailure ? { ok: false, error: 'busy' } : { ok: true, profile: id, locked },
     delete_profile: id => ({ ok: true, profile: id }),
@@ -114,12 +116,32 @@ page.showJob = () => {};
     assert.equal(calls.filter(call => call[0] === 'profile_active').length, activeProfileCalls);
     assert.deepEqual(calls.find(call => call[0] === 'get_profile_result'), ['get_profile_result', 'flowseal-general-alt']);
 
+    // Результат текущей строки читается и при переходе testing -> result с тем же profile_id.
+    const resultCalls = calls.filter(call => call[0] === 'get_profile_result').length;
+    jobReply = { ok: true, job_id: '1-2', mode: 'all', status: 'RUNNING', stage: 'result', profile_id: 'flowseal-next', current: 2, total: 3 };
+    await page.refreshJob();
+    assert.equal(calls.filter(call => call[0] === 'get_profile_result').length, resultCalls + 1);
+    assert.deepEqual(calls.filter(call => call[0] === 'get_profile_result').at(-1), ['get_profile_result', 'flowseal-next']);
+
     // На terminal transition runtime/profile перечитываются ровно один раз, current_job не нужен.
     jobReply = { ok: true, job_id: '1-2', mode: 'all', status: 'DONE', stage: 'complete', profile_id: 'flowseal-next', current: 3, total: 3 };
     const terminalStatusCalls = calls.filter(call => call[0] === 'status').length;
     const terminalCurrentCalls = calls.filter(call => call[0] === 'current_job').length;
     const terminalActiveCalls = calls.filter(call => call[0] === 'profile_active').length;
-    await page.refreshJob();
+    let reportRequested, releaseReport;
+    const reportStarted = new Promise(resolve => { reportRequested = resolve; });
+    replies.job_result = () => {
+        reportRequested();
+        return new Promise(resolve => { releaseReport = () => resolve({ ok: true, status: 'DONE', results: [
+            { profile_id: 'flowseal-one' }, { profile_id: 'flowseal-two' }, { profile_id: 'flowseal-next' }
+        ] }); });
+    };
+    const terminalRefresh = page.refreshJob();
+    await reportStarted;
+    assert.equal(page.jobState.status, 'RUNNING');
+    assert.equal(page.activeJob, '1-2');
+    releaseReport();
+    await terminalRefresh;
     assert.equal(calls.filter(call => call[0] === 'status').length, terminalStatusCalls + 1);
     assert.equal(calls.filter(call => call[0] === 'current_job').length, terminalCurrentCalls);
     assert.equal(calls.filter(call => call[0] === 'profile_active').length, terminalActiveCalls + 1);
