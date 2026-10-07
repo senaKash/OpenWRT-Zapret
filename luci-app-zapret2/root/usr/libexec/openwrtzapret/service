@@ -246,15 +246,32 @@ owz_profile_hash() {
 	printf '%s' "$actual"
 }
 
-owz_profile_load() {
-	local id="$1" source file actual
+owz_profile_root() {
+	local id="$1"
+	case "$id" in *[!a-z0-9_-]*|*..*) return 1;; esac
 	case "$id" in
-		builtin-[a-z0-9]*) source=builtin; file="/usr/share/openwrtzapret/profiles/builtin/$id.json";;
-		flowseal-[a-z0-9]*) source=flowseal; file="/etc/openwrtzapret/profiles/flowseal/$id.json";;
-		user-[a-z0-9]*) source=user; file="/etc/openwrtzapret/profiles/user/$id.json";;
+		builtin-[a-z0-9]*) printf '%s\n' /usr/share/openwrtzapret/profiles/builtin;;
+		flowseal-[a-z0-9]*) printf '%s\n' /etc/openwrtzapret/profiles/flowseal;;
+		user-[a-z0-9]*) printf '%s\n' /etc/openwrtzapret/profiles/user;;
 		*) return 1;;
 	esac
-	case "$id" in *[!a-z0-9_-]*|*..*) return 1;; esac
+}
+
+owz_profile_file() {
+	local id="$1" root file
+	root=$(owz_profile_root "$id") || return 1
+	[ -d "$root" ] && [ ! -L "$root" ] || return 1
+	file="$root/$id.json"
+	if [ -f "$file" ] && [ ! -L "$file" ]; then printf '%s\n' "$file"; return 0; fi
+	file=$(find "$root" -type f -name "$id.json" -print 2>/dev/null | LC_ALL=C sort | sed -n '1p')
+	[ -n "$file" ] || return 1
+	printf '%s\n' "$file"
+}
+
+owz_profile_load() {
+	local id="$1" source file actual
+	case "$id" in builtin-*) source=builtin;; flowseal-*) source=flowseal;; user-*) source=user;; *) return 1;; esac
+	file=$(owz_profile_file "$id") || return 1
 	[ -f "$file" ] && [ ! -L "$file" ] || return 1
 	[ "$(wc -c < "$file")" -le 65536 ] || return 1
 	command -v jsonfilter >/dev/null 2>&1 || return 1
@@ -287,16 +304,23 @@ owz_profile_load() {
 	owz_validate_requirement_list "$OWZ_PROFILE_IPSETS" || return 1
 	actual=$(owz_profile_hash) || return 1
 	[ "$OWZ_PROFILE_HASH" = "sha256:$actual" ] || return 1
+	OWZ_PROFILE_FILE=$file
 }
 
 owz_profile_requirements_ready() {
-	local list
+	local list item
+	OWZ_MISSING_REQUIREMENT=''
 	for list in "$OWZ_PROFILE_BLOBS" "$OWZ_PROFILE_HOSTLISTS" "$OWZ_PROFILE_IPSETS"; do
 		[ -n "$list" ] || continue
-		printf '%s\n' "$list" | while IFS= read -r item; do
+		while IFS= read -r item; do
 			[ -n "$item" ] || continue
-			[ -f "$item" ] && [ ! -L "$item" ] || exit 1
-		done || return 1
+			if [ ! -f "$item" ] || [ -L "$item" ]; then
+				OWZ_MISSING_REQUIREMENT=$item
+				return 1
+			fi
+		done <<EOF
+$list
+EOF
 	done
 	return 0
 }
@@ -356,11 +380,14 @@ owz_profile_restore_pointer() {
 }
 
 owz_profile_result() {
-	local ok="$1" id="$2" stage="$3" rolled="$4" error="$5"
+	local ok="$1" id="$2" stage="$3" rolled="$4" error="$5" missing=null
+	if [ "$error" = missing_requirements ] && [ -n "${OWZ_MISSING_REQUIREMENT:-}" ]; then
+		missing="\"$OWZ_MISSING_REQUIREMENT\""
+	fi
 	[ -n "$error" ] || error=null
 	[ "$error" = null ] || error="\"$error\""
 	owz_status >/dev/null
-	printf '{"ok":%s,"profile":"%s","stage":"%s","rolled_back":%s,"error":%s,"state":"%s"}\n' "$ok" "$id" "$stage" "$rolled" "$error" "$OWZ_STATE"
+	printf '{"ok":%s,"profile":"%s","stage":"%s","rolled_back":%s,"error":%s,"missing_requirement":%s,"state":"%s"}\n' "$ok" "$id" "$stage" "$rolled" "$error" "$missing" "$OWZ_STATE"
 }
 
 owz_restore_snapshot() {
@@ -531,17 +558,41 @@ owz_job_meta_set_pid() {
 	awk -v pid="$pid" 'BEGIN{done=0} /^worker_pid=/{if(!done){print "worker_pid=" pid; done=1} next} {print} END{if(!done) print "worker_pid=" pid}' "$file" > "$tmp" && mv -f "$tmp" "$file"
 }
 
+owz_profile_ids() {
+	local root file id
+	for root in /usr/share/openwrtzapret/profiles/builtin /etc/openwrtzapret/profiles/flowseal /etc/openwrtzapret/profiles/user; do
+		[ -d "$root" ] && [ ! -L "$root" ] || continue
+		find "$root" -type f -name '*.json' -print 2>/dev/null
+	done | while IFS= read -r file; do
+		id=${file##*/}; id=${id%.json}
+		owz_profile_root "$id" >/dev/null || continue
+		printf '%s\n' "$id"
+	done | LC_ALL=C sort -u
+}
+
+owz_profile_list() {
+	local id first=true
+	printf '{"ok":true,"ids":['
+	owz_profile_ids | while IFS= read -r id; do
+		if [ "$first" = true ]; then first=false; else printf ','; fi
+		printf '"%s"' "$id"
+	done
+	printf ']}\n'
+}
+
+owz_profile_get() {
+	local content
+	owz_profile_load "$1" || { printf '%s\n' '{"ok":false,"error":"invalid_profile"}'; return 0; }
+	content=$(cat "$OWZ_PROFILE_FILE") || { printf '%s\n' '{"ok":false,"error":"profile_read_failed"}'; return 0; }
+	printf '{"ok":true,"profile":%s}\n' "$content"
+}
+
 owz_list_compatible_profiles() {
-	local dir file id
-	for dir in /usr/share/openwrtzapret/profiles/builtin /etc/openwrtzapret/profiles/flowseal /etc/openwrtzapret/profiles/user; do
-		for file in "$dir"/*.json; do
-			[ -f "$file" ] || continue
-			id=${file##*/}; id=${id%.json}
-			owz_profile_load "$id" || continue
-			[ "$OWZ_PROFILE_COMPATIBLE" = true ] || continue
-			owz_profile_requirements_ready || continue
-			printf '%s\n' "$id"
-		done
+	local id
+	owz_profile_ids | while IFS= read -r id; do
+		owz_profile_load "$id" || continue
+		[ "$OWZ_PROFILE_COMPATIBLE" = true ] || continue
+		printf '%s\n' "$id"
 	done
 }
 
@@ -626,18 +677,16 @@ owz_probe_voice_udp() {
 }
 
 owz_profile_test_network() {
-	local youtube googlevideo discord media voice ys gs ds ms vs overall
+	local youtube discord cloudflare github ys ds cs gs overall
 	youtube=$(owz_probe_http 'https://www.youtube.com/generate_204'); ys=$?
-	googlevideo=$(owz_probe_http 'https://redirector.googlevideo.com/report_mapping?di=no'); gs=$?
 	discord=$(owz_probe_http 'https://discord.com/api/v10/gateway'); ds=$?
-	media=$(owz_probe_http 'https://cdn.discordapp.com/'); ms=$?
-	voice=$(owz_probe_voice_udp); vs=$?
-	if [ "$ys" -ne 0 ] || [ "$gs" -ne 0 ] || [ "$ds" -ne 0 ] || [ "$ms" -ne 0 ]; then overall=FAIL
-	elif [ "$vs" -ne 0 ]; then overall=FAIL
-	elif printf '%s' "$voice" | grep -q '"status":"PASS"'; then overall=PASS
-	else overall=PARTIAL; fi
+	cloudflare=$(owz_probe_http 'https://www.cloudflare.com/cdn-cgi/trace'); cs=$?
+	github=$(owz_probe_http 'https://api.github.com/zen'); gs=$?
+	if [ "$ys" -ne 0 ] || [ "$ds" -ne 0 ]; then overall=FAIL
+	elif [ "$cs" -ne 0 ] || [ "$gs" -ne 0 ]; then overall=PARTIAL
+	else overall=PASS; fi
 	OWZ_TEST_OVERALL=$overall
-	OWZ_TESTS_JSON=$(printf '{"youtube":%s,"googlevideo":%s,"discord":%s,"discord_media":%s,"discord_voice_udp":%s}' "$youtube" "$googlevideo" "$discord" "$media" "$voice")
+	OWZ_TESTS_JSON=$(printf '{"youtube":%s,"discord":%s,"cloudflare":%s,"github":%s}' "$youtube" "$discord" "$cloudflare" "$github")
 }
 
 owz_profile_result_write() {
@@ -705,7 +754,8 @@ owz_job_test_one() {
 	else
 		status=FAIL
 		reason=$failure
-		tests='{"youtube":{"status":"SKIP"},"googlevideo":{"status":"SKIP"},"discord":{"status":"SKIP"},"discord_media":{"status":"SKIP"},"discord_voice_udp":{"status":"SKIP"}}'
+		if [ "$failure" = missing_requirements ] && [ -n "$OWZ_MISSING_REQUIREMENT" ]; then reason="missing requirement: $OWZ_MISSING_REQUIREMENT"; fi
+		tests='{"youtube":{"status":"SKIP"},"discord":{"status":"SKIP"},"cloudflare":{"status":"SKIP"},"github":{"status":"SKIP"}}'
 	fi
 	if owz_job_snapshot_restore "$dir"; then restored=true; else restored=false; fi
 	if [ "$restored" != true ]; then
@@ -752,7 +802,7 @@ owz_job_prepare() {
 			case "$old_state" in RUNNING|STOPPED) :;; *) printf '{"ok":false,"error":"unsafe_initial_state","state":"%s"}
 ' "$old_state"; return 0;; esac
 			if [ "$mode" = profile ]; then
-				owz_profile_load "$profile" && [ "$OWZ_PROFILE_COMPATIBLE" = true ] && owz_profile_requirements_ready || { printf '%s
+				owz_profile_load "$profile" && [ "$OWZ_PROFILE_COMPATIBLE" = true ] || { printf '%s
 ' '{"ok":false,"error":"invalid_or_incompatible_profile"}'; return 0; }
 				profiles=$profile
 			else
@@ -1035,6 +1085,8 @@ if [ "${0##*/}" = service ]; then
 		status) [ "$#" -eq 1 ] && owz_status;;
 		start|stop|restart) [ "$#" -eq 1 ] && owz_control "$1";;
 		profile_active) [ "$#" -eq 1 ] && owz_profile_active;;
+		profile_list) [ "$#" -eq 1 ] && owz_profile_list;;
+		profile_get) [ "$#" -eq 2 ] && owz_profile_get "$2";;
 		profile_check) [ "$#" -eq 2 ] && { owz_profile_load "$2" && printf '%s\n' '{"ok":true}' || printf '%s\n' '{"ok":false,"error":"invalid_profile"}'; };;
 		profile_overlay_active) [ "$#" -eq 1 ] && owz_profile_overlay_active;;
 		apply_profile) [ "$#" -eq 2 ] && owz_apply_profile "$2";;
