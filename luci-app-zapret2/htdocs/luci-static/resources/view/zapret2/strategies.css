@@ -274,3 +274,23 @@
 
 .owz-delete-button:hover:not(:disabled) { background: rgba(127, 127, 127, .16); }
 .owz-delete-button:disabled { opacity: .45; }
+
+.owz-lists-heading { margin-bottom: .75rem; }
+.owz-lists-heading h2 { margin: 0; }
+.owz-list-drop {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .5rem 1rem;
+    margin: .75rem 0;
+    padding: .75rem 1rem;
+    border: 1px dashed rgba(127, 127, 127, .5);
+    border-radius: 4px;
+}
+.owz-list-drop-active { border-color: #2995c7; background: rgba(41, 149, 199, .08); }
+.owz-lists-table { min-width: 640px; }
+.owz-lists-table col:first-child { width: 30%; }
+.owz-lists-table col:nth-child(2) { width: 40%; }
+.owz-lists-table col:nth-child(3) { width: 15%; }
+.owz-lists-table col:last-child { width: 15%; }
+.owz-lists-table th:last-child, .owz-lists-table td:last-child { text-align: center; }

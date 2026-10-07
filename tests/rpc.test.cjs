@@ -23,7 +23,22 @@ const methods = vm.runInNewContext(`(function(){${code}\n})()`, {
 }).openwrtzapret;
 const commandArgs = command => typeof command === 'string' ? command.split(' ') : Array.from(command);
 
-assert.deepEqual(Object.keys(methods), ['status', 'profile_active', 'start', 'stop', 'restart', 'set_manual', 'list_profiles', 'get_profile', 'get_profile_result', 'set_profile_lock', 'delete_profile', 'import_user_strategy', 'apply_profile', 'start_test', 'start_test_all', 'flowseal_status', 'flowseal_check', 'start_flowseal_update', 'current_job', 'job_status', 'job_result', 'cancel_job']);
+assert.deepEqual(Object.keys(methods), ['status', 'profile_active', 'lists_status', 'put_list', 'remove_list', 'reset_lists', 'start', 'stop', 'restart', 'set_manual', 'list_profiles', 'get_profile', 'get_profile_result', 'set_profile_lock', 'delete_profile', 'import_user_strategy', 'apply_profile', 'start_test', 'start_test_all', 'flowseal_status', 'flowseal_check', 'start_flowseal_update', 'current_job', 'job_status', 'job_result', 'cancel_job']);
+reply = '{"ok":true,"lists":[{"name":"list-google.txt","target":"zapret-hosts-google.txt","source":"builtin"}]}';
+assert.equal(methods.lists_status.call().lists[0].source, 'builtin');
+assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'lists_status']);
+assert.equal(methods.put_list.call({ args: { name: '../bad.txt', data: 'QUJD' } }).error, 'invalid_list');
+assert.equal(methods.put_list.call({ args: { name: 'list-google.txt', data: 'bad data' } }).error, 'invalid_data');
+assert.equal(methods.put_list.call({ args: { name: 'list-google.txt', data: 'QUJD' } }).ok, true);
+assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'list_put', 'list-google.txt', 'QUJD']);
+assert.equal(methods.put_list.call({ args: { name: 'ipset-exclude.txt', data: '' } }).ok, true);
+assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'list_put', 'ipset-exclude.txt', '-']);
+assert.equal(methods.remove_list.call({ args: { name: '../bad.txt' } }).error, 'invalid_list');
+assert.equal(methods.remove_list.call({ args: { name: 'list-general-user.txt' } }).ok, true);
+assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'list_remove', 'list-general-user.txt']);
+assert.equal(methods.reset_lists.call().ok, true);
+assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'list_reset_all']);
+reply = '{"running":false,"daemon":false,"firewall":false,"nfqueue":false,"enabled":null,"partial":false,"error":null,"state":"STOPPED"}';
 for (const action of ['status', 'start', 'stop', 'restart']) {
     assert.equal(methods[action].call().state, 'STOPPED');
     assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', action]);

@@ -27,6 +27,10 @@ function validJobId(id) {
 	return type(id) == 'string' && match(id, /^[0-9]+-[0-9]+$/);
 }
 
+function validListName(name) {
+	return type(name) == 'string' && match(name, /^(list-google|list-general-user|list-exclude-user|ipset-exclude)\.txt$/);
+}
+
 function readProfileResult(id) {
 	if (!validId(id))
 		return null;
@@ -88,6 +92,19 @@ return {
 	'openwrtzapret': {
 		status:  { call: function() { return invoke('status'); } },
 		profile_active: { call: function() { return invoke('profile_active'); } },
+		lists_status: { call: function() { return invoke('lists_status'); } },
+		put_list: { args: { name: 'string', data: 'string' }, call: function(request) {
+			let name = request.args.name, data = request.args.data;
+			if (!validListName(name)) return { ok: false, error: 'invalid_list' };
+			if (type(data) != 'string' || length(data) > 65536 || (data != '' && !match(data, /^[A-Za-z0-9+\/=]+$/)))
+				return { ok: false, error: 'invalid_data' };
+			return invoke('list_put', name + ' ' + (data == '' ? '-' : data));
+		} },
+		remove_list: { args: { name: 'string' }, call: function(request) {
+			if (!validListName(request.args.name)) return { ok: false, error: 'invalid_list' };
+			return invoke('list_remove', request.args.name);
+		} },
+		reset_lists: { call: function() { return invoke('list_reset_all'); } },
 		start:   { call: function() { return invoke('start'); } },
 		stop:    { call: function() { return invoke('stop'); } },
 		restart: { call: function() { return invoke('restart'); } },

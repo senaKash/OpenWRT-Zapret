@@ -128,7 +128,7 @@ return view.extend({
         let previousId = this.activeProfileId;
         this.activeProfileId = id || null;
         let active = this.profiles.find(p => p.id == id);
-        this.active.textContent = active ? active.name : (id || _('Manual / Settings'));
+        this.active.textContent = active ? active.name : (id || _('Manual mode'));
         this.updateActiveBadge();
         if (previousId && previousId != id) this.updateResultRow(previousId);
         if (id) this.updateResultRow(id);
@@ -148,7 +148,7 @@ return view.extend({
         this.profiles = data.profiles || [];
         let selected = this.selectedProfileId || data.active_profile || '__manual__';
         this.selector.replaceChildren();
-        this.selector.appendChild(E('option', { value: '__manual__' }, _('Manual / Settings')));
+        this.selector.appendChild(E('option', { value: '__manual__' }, _('Manual mode')));
         for (let profile of this.profiles) {
             let unavailable = profile.compatible !== true;
             let attrs = { value: profile.id };

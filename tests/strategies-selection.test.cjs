@@ -88,7 +88,7 @@ page.showJob = () => {};
     assert.equal(page.applyButton.disabled, false);
     page.updateProfiles(listing);
     assert.equal(page.selector.value, 'flowseal-general-alt');
-    assert.equal(page.active.textContent, 'Manual / Settings');
+    assert.equal(page.active.textContent, 'Manual mode');
     await page.refreshJob();
     assert.equal(page.active.textContent, 'Zapret2 default');
     assert.equal(page.selector.value, 'flowseal-general-alt');

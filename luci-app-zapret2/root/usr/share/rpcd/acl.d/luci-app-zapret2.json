@@ -57,6 +57,7 @@
 				"openwrtzapret": [
 					"status",
 					"profile_active",
+					"lists_status",
 					"list_profiles",
 					"get_profile",
 					"get_profile_result",
@@ -85,7 +86,10 @@
 					"start_flowseal_update",
 					"set_profile_lock",
 					"delete_profile",
-					"import_user_strategy"
+					"import_user_strategy",
+					"put_list",
+					"remove_list",
+					"reset_lists"
 				]
 			},
 			"file": {
