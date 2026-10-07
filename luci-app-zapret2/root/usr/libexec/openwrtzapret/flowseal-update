@@ -6,9 +6,12 @@ API_URL='https://api.github.com/repos/Flowseal/zapret-discord-youtube/releases/l
 RELEASE_BASE='https://github.com/Flowseal/zapret-discord-youtube/releases/download'
 STATE_ROOT='/etc/openwrtzapret/flowseal'
 PROFILE_ROOT='/etc/openwrtzapret/profiles/flowseal'
+RESULT_ROOT='/etc/openwrtzapret/state/results'
 ASSET_ROOT="$STATE_ROOT/assets"
 RUNTIME_ASSET_ROOT="/etc/openwrtzapret/flowseal/assets"
 IMPORT_AWK='/usr/libexec/openwrtzapret/flowseal-import.awk'
+ZAPRET_BASE='/opt/zapret2'
+OWZ_ZAPRET2_VALIDATOR_READY=0
 MAX_ARCHIVE=16777216
 MAX_MEMBER=8388608
 MAX_TOTAL=33554432
@@ -19,6 +22,55 @@ MAX_PROFILES=64
 fail_json() {
 	local code="$1" stage="$2"
 	printf '{"ok":false,"mode":"flowseal_update","stage":"%s","error":"%s"}\n' "$stage" "$code"
+}
+
+normalize_asset_tree() {
+	local root="$1"
+	[ -d "$root" ] && [ ! -L "$root" ] || return 1
+	find "$root" -type d -exec chmod 755 {} \; || return 1
+	find "$root" -type f -exec chmod 644 {} \; || return 1
+}
+
+owz_zapret2_validator_load() {
+	[ "$OWZ_ZAPRET2_VALIDATOR_READY" = 1 ] && return 0
+	[ -r "$ZAPRET_BASE/config" ] || return 1
+	[ -r "$ZAPRET_BASE/common/base.sh" ] || return 1
+	[ -r "$ZAPRET_BASE/common/installer.sh" ] || return 1
+	[ -r "$ZAPRET_BASE/common/list.sh" ] || return 1
+
+	# Это штатные helpers zapret2. Загружаем их один раз на весь update job,
+	# чтобы не плодить shell-процессы и повторный разбор одних и тех же файлов.
+	set +u
+	. "$ZAPRET_BASE/config" || { set -u; return 1; }
+	. "$ZAPRET_BASE/common/base.sh" || { set -u; return 1; }
+	. "$ZAPRET_BASE/common/installer.sh" || { set -u; return 1; }
+	. "$ZAPRET_BASE/common/list.sh" || { set -u; return 1; }
+	set -u
+
+	MODE_FILTER=${MODE_FILTER:-none}
+	HOSTLIST_BASE=${HOSTLIST_BASE:-}
+	AUTOHOSTLIST_DEBUGLOG=${AUTOHOSTLIST_DEBUGLOG:-0}
+	WS_USER=${WS_USER:-}
+	QNUM=${QNUM:-300}
+	OWZ_ZAPRET2_VALIDATOR_READY=1
+}
+
+owz_zapret2_dry_run() {
+	local nfq="$1" runtime_base="$2" asset_stage="$3" opt qn
+	owz_zapret2_validator_load || return 2
+
+	# Профиль хранит финальные runtime-пути. Во время импорта проверяем тот же
+	# набор файлов прямо в staging, не копируя assets второй раз.
+	opt=$(printf '%s\n' "$nfq" | sed "s#${runtime_base}#${asset_stage}#g") || return 2
+	NFQWS2_ENABLE=1
+	NFQWS2_OPT=$opt
+	qn=${QNUM:-300}
+
+	# Используем штатную подстановку hostlist и штатный dry-run zapret2.
+	# dry_run_nfqws() в upstream заканчивается informational echo, поэтому
+	# для сохранения реального exit code вызываем его внутренний dry-run helper.
+	filter_apply_hostlist_target NFQWS2_OPT || return 2
+	dry_run_nfqws_ --qnum=$qn $NFQWS2_OPT >/dev/null 2>&1
 }
 
 valid_version() {
@@ -143,9 +195,9 @@ copy_requirement() {
 		# Генерируем только эти точные имена; два исключения получают штатные заглушки.
 		if [ ! -e "$src" ]; then
 			case "$rel" in
-				lists/list-general-user.txt) mkdir -p "${dst%/*}" && : > "$dst" || return 1; return 0;;
-				lists/list-exclude-user.txt) mkdir -p "${dst%/*}" && printf '%s\n' 'domain.example.abc' > "$dst" || return 1; return 0;;
-				lists/ipset-exclude-user.txt) mkdir -p "${dst%/*}" && printf '%s\n' '203.0.113.113/32' > "$dst" || return 1; return 0;;
+				lists/list-general-user.txt) mkdir -p "${dst%/*}" && chmod 755 "$asset_stage" "${dst%/*}" && : > "$dst" && chmod 644 "$dst" || return 1; return 0;;
+				lists/list-exclude-user.txt) mkdir -p "${dst%/*}" && chmod 755 "$asset_stage" "${dst%/*}" && printf '%s\n' 'domain.example.abc' > "$dst" && chmod 644 "$dst" || return 1; return 0;;
+				lists/ipset-exclude-user.txt) mkdir -p "${dst%/*}" && chmod 755 "$asset_stage" "${dst%/*}" && printf '%s\n' '203.0.113.113/32' > "$dst" && chmod 644 "$dst" || return 1; return 0;;
 			esac
 		fi
 		return 1
@@ -154,7 +206,8 @@ copy_requirement() {
 	size=$(wc -c < "$src" 2>/dev/null) || return 1
 	[ "$size" -le "$MAX_MEMBER" ] || return 3
 	mkdir -p "${dst%/*}" || return 1
-	cp "$src" "$dst" || return 1
+	chmod 755 "$asset_stage" "${dst%/*}" 2>/dev/null || return 1
+	cp "$src" "$dst" && chmod 644 "$dst" || return 1
 	FLOWSEAL_TOTAL=$((FLOWSEAL_TOTAL + size)); [ "$FLOWSEAL_TOTAL" -le "$MAX_TOTAL" ] || return 3
 	return 0
 }
@@ -180,7 +233,7 @@ copy_requirements_from_canon() {
 }
 
 import_one() {
-	local bat="$1" version="$2" source_root="$3" profiles_stage="$4" asset_stage="$5" manifest="$6" file stem key vslug id runtime_base work canon strategy out rc missing content strategy_hash compatible
+	local bat="$1" version="$2" source_root="$3" profiles_stage="$4" asset_stage="$5" manifest="$6" file stem key vslug id runtime_base work canon strategy out rc missing content strategy_hash compatible nfq dry_rc
 	file=${bat##*/}; stem=${file%.[bB][aA][tT]}
 	key=$(slugify "$stem"); [ -n "$key" ] || key=strategy
 	vslug=$(slugify "$version"); [ -n "$vslug" ] || return 1
@@ -193,14 +246,40 @@ import_one() {
 		-v profile_id="$id" -v profile_name="$stem" -v source_version="$version" \
 		-v original_file="$file" -v strategy_key="$key" -v canon_file="$canon" \
 		-v strategy_file="$strategy" -v out_file="$out" -f "$IMPORT_AWK" "$bat" || { rm -rf "$work"; return 1; }
-	rc=0; copy_requirements_from_canon "$canon" "$runtime_base" "$source_root" "$asset_stage" || rc=$?
-	if [ "$rc" -eq 10 ]; then
-		missing=$FLOWSEAL_MISSING
-		awk -v runtime_base="$runtime_base" -v game_tcp=12 -v game_udp=12 -v game_mode=none \
-			-v pre_unsupported="${missing:-missing asset}" -v profile_id="$id" -v profile_name="$stem" -v source_version="$version" \
-			-v original_file="$file" -v strategy_key="$key" -v canon_file="$canon" \
-			-v strategy_file="$strategy" -v out_file="$out" -f "$IMPORT_AWK" "$bat" || { rm -rf "$work"; return 1; }
-	elif [ "$rc" -ne 0 ]; then rm -rf "$work"; return 1; fi
+	compatible=$(sed -n 's/^compatible=//p' "$canon" | tail -n 1)
+	if [ "$compatible" = true ]; then
+		rc=0; copy_requirements_from_canon "$canon" "$runtime_base" "$source_root" "$asset_stage" || rc=$?
+		if [ "$rc" -eq 10 ]; then
+			missing=$FLOWSEAL_MISSING
+			awk -v runtime_base="$runtime_base" -v game_tcp=12 -v game_udp=12 -v game_mode=none \
+				-v pre_unsupported="${missing:-missing asset}" -v profile_id="$id" -v profile_name="$stem" -v source_version="$version" \
+				-v original_file="$file" -v strategy_key="$key" -v canon_file="$canon" \
+				-v strategy_file="$strategy" -v out_file="$out" -f "$IMPORT_AWK" "$bat" || { rm -rf "$work"; return 1; }
+			compatible=false
+		elif [ "$rc" -ne 0 ]; then
+			rm -rf "$work"
+			return 1
+		fi
+	fi
+
+	if [ "$compatible" = true ]; then
+		nfq=$(sed -n 's/^nfqws2=//p' "$canon" | tail -n 1)
+		dry_rc=0
+		owz_zapret2_dry_run "$nfq" "$runtime_base" "$asset_stage" || dry_rc=$?
+		case "$dry_rc" in
+			0) :;;
+			1)
+				# Семантику NFQWS2_OPT проверяет сам zapret2/nfqws2.
+				# Наш импортёр только фиксирует результат как несовместимый профиль.
+				awk -v runtime_base="$runtime_base" -v game_tcp=12 -v game_udp=12 -v game_mode=none \
+					-v pre_unsupported="zapret2 dry-run rejected strategy" -v profile_id="$id" -v profile_name="$stem" -v source_version="$version" \
+					-v original_file="$file" -v strategy_key="$key" -v canon_file="$canon" \
+					-v strategy_file="$strategy" -v out_file="$out" -f "$IMPORT_AWK" "$bat" || { rm -rf "$work"; return 1; }
+				;;
+			*) rm -rf "$work"; return 1;;
+		esac
+	fi
+
 	content=$(sha256sum "$canon" 2>/dev/null); content=${content%% *}
 	strategy_hash=$(sha256sum "$strategy" 2>/dev/null); strategy_hash=${strategy_hash%% *}
 	case "$content$strategy_hash" in *[!0-9a-f]*) rm -rf "$work"; return 1;; esac
@@ -244,8 +323,11 @@ install_staged() {
 	local had_asset=false had_profiles=false asset_live=false profiles_live=false failed=false
 	valid_version "$version" || return 1
 	[ -d "$profiles_stage" ] && [ -d "$asset_stage" ] || return 1
-	mkdir -p "$STATE_ROOT" "$ASSET_ROOT" "${PROFILE_ROOT%/*}" || return 1
-	chmod 700 "$STATE_ROOT" "$ASSET_ROOT" "${PROFILE_ROOT%/*}" 2>/dev/null || :
+	mkdir -p "${STATE_ROOT%/*}" "$STATE_ROOT" "$ASSET_ROOT" "${PROFILE_ROOT%/*}" || return 1
+	# nfqws2 сбрасывает root до чтения hostlist/blob, поэтому весь путь к assets
+	# должен быть проходимым. Приватный каталог profiles остаётся 0700.
+	chmod 755 "${STATE_ROOT%/*}" "$STATE_ROOT" "$ASSET_ROOT" 2>/dev/null || return 1
+	chmod 700 "${PROFILE_ROOT%/*}" 2>/dev/null || return 1
 	asset_final="$ASSET_ROOT/$version"
 	asset_new="$ASSET_ROOT/.${version}.new.$$"; asset_old="$ASSET_ROOT/.${version}.old.$$"
 	profile_new="${PROFILE_ROOT}.new.$$"; profile_old="${PROFILE_ROOT}.old.$$"
@@ -253,9 +335,11 @@ install_staged() {
 	[ ! -e "$asset_new" ] && [ ! -e "$asset_old" ] && [ ! -e "$profile_new" ] && [ ! -e "$profile_old" ] && [ ! -e "$state_stage" ] || return 1
 	[ ! -L "$asset_final" ] && [ ! -L "$PROFILE_ROOT" ] || return 1
 	mkdir -p "$asset_new" "$profile_new" "$state_stage" || return 1
-	chmod 700 "$asset_new" "$profile_new" "$state_stage" 2>/dev/null || :
+	chmod 755 "$asset_new" 2>/dev/null || return 1
+	chmod 700 "$profile_new" "$state_stage" 2>/dev/null || return 1
 	# Сначала полностью готовим новый набор на тех же файловых системах.
 	cp -R "$asset_stage"/. "$asset_new"/ || failed=true
+	[ "$failed" = true ] || normalize_asset_tree "$asset_new" || failed=true
 	if [ "$failed" = false ]; then
 		for file in "$profiles_stage"/*.json; do
 			[ -f "$file" ] || continue
@@ -308,6 +392,11 @@ install_staged() {
 		return 1
 	fi
 	rm -rf "$asset_old" "$profile_old" "$state_stage"
+	# Asset-набор мог измениться без изменения content_hash профиля. Старые сетевые
+	# результаты для импортированных профилей после update больше не достоверны.
+	if [ -d "$RESULT_ROOT" ] && [ ! -L "$RESULT_ROOT" ]; then
+		rm -f "$RESULT_ROOT"/flowseal-*.json 2>/dev/null || :
+	fi
 	: > "$jobdir/flowseal_committed" 2>/dev/null || :
 	return 0
 }
@@ -317,6 +406,9 @@ run_update() {
 	case "$jobdir" in /etc/openwrtzapret/state/jobs/[0-9]*-[0-9]*) :;; *) fail_json invalid_job_dir validation; return 0;; esac
 	[ -d "$jobdir" ] && [ ! -L "$jobdir" ] || { fail_json invalid_job_dir validation; return 0; }
 	tmp=$(mktemp -d /tmp/openwrtzapret-flowseal-update.XXXXXX) || { fail_json temp_failed prepare; return 0; }
+	# Release публичный; 0755 нужен, чтобы nfqws2 после drop-privileges смог
+	# выполнить dry-run по staging assets без их второй копии.
+	chmod 755 "$tmp" || { rm -rf "$tmp"; fail_json temp_failed prepare; return 0; }
 	trap "rm -rf '$tmp'" EXIT INT TERM
 	api="$tmp/api.json"; remote=$(fetch_latest "$api"); rc=$?
 	if [ "$rc" -ne 0 ]; then fail_json remote_check_failed check > "$jobdir/result.json"; return 1; fi
@@ -330,7 +422,10 @@ run_update() {
 	extract="$tmp/extract"; mkdir -p "$extract"
 	extract_selected "$archive" "$extract" "$tmp/members" "$tmp/selected" || { fail_json unsafe_or_invalid_archive extract > "$jobdir/result.json"; return 1; }
 	root=$(find_release_root "$extract" "$tmp/bats") || { fail_json invalid_release_layout extract > "$jobdir/result.json"; return 1; }
-	profiles="$tmp/profiles"; assets="$tmp/assets"; mkdir -p "$profiles" "$assets"; manifest="$tmp/manifest.tsv"; : > "$manifest"; FLOWSEAL_TOTAL=0
+	profiles="$tmp/profiles"; assets="$tmp/assets"; mkdir -p "$profiles" "$assets" || { fail_json temp_failed prepare > "$jobdir/result.json"; return 1; }
+	chmod 700 "$profiles" || { fail_json temp_failed prepare > "$jobdir/result.json"; return 1; }
+	chmod 755 "$assets" || { fail_json temp_failed prepare > "$jobdir/result.json"; return 1; }
+	manifest="$tmp/manifest.tsv"; : > "$manifest"; FLOWSEAL_TOTAL=0
 	while IFS= read -r bat; do
 		[ ! -e "$jobdir/cancel" ] || { printf '{"ok":true,"mode":"flowseal_update","status":"CANCELLED","source_version":"%s"}\n' "$remote" > "$jobdir/result.json"; return 130; }
 		import_one "$bat" "$remote" "$root" "$profiles" "$assets" "$manifest" || { fail_json import_failed import > "$jobdir/result.json"; return 1; }
