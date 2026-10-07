@@ -277,20 +277,52 @@
 
 .owz-lists-heading { margin-bottom: .75rem; }
 .owz-lists-heading h2 { margin: 0; }
-.owz-list-drop {
+.owz-lists-table { min-width: 560px; }
+.owz-lists-table col:first-child { width: 52%; }
+.owz-lists-table col:nth-child(2) { width: 18%; }
+.owz-lists-table col:last-child { width: 30%; }
+.owz-lists-table th:last-child,
+.owz-lists-table td:last-child { text-align: center; }
+.owz-list-name { font-weight: 500; }
+.owz-list-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .45rem;
+}
+.owz-list-edit-button,
+.owz-list-reset-button { min-width: 4.8rem; }
+.owz-list-editor {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    min-height: 21rem;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: .9rem;
+    line-height: 1.45;
+    white-space: pre;
+}
+.owz-list-editor-note { margin: 0 0 .65rem; }
+.owz-list-editor-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: .5rem;
+    margin-top: .75rem;
+}
+
+.owz-import-lists-note {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: .5rem 1rem;
-    margin: .75rem 0;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: .75rem;
     padding: .75rem 1rem;
-    border: 1px dashed rgba(127, 127, 127, .5);
+    border: 1px solid rgba(127, 127, 127, .28);
     border-radius: 4px;
 }
-.owz-list-drop-active { border-color: #2995c7; background: rgba(41, 149, 199, .08); }
-.owz-lists-table { min-width: 640px; }
-.owz-lists-table col:first-child { width: 30%; }
-.owz-lists-table col:nth-child(2) { width: 40%; }
-.owz-lists-table col:nth-child(3) { width: 15%; }
-.owz-lists-table col:last-child { width: 15%; }
-.owz-lists-table th:last-child, .owz-lists-table td:last-child { text-align: center; }
+.owz-import-lists-note .cbi-value-description { margin-top: .2rem; }
+.owz-import-lists-note .btn { white-space: nowrap; }
+@media (max-width: 600px) {
+    .owz-import-lists-note { align-items: flex-start; flex-direction: column; }
+}

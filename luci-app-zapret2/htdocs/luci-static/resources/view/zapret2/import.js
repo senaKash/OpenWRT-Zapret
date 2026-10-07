@@ -42,7 +42,7 @@ return view.extend({
         if (this.busy) return;
         let text = this.input.value || '';
         if (!text.trim()) {
-            ui.addNotification(null, E('p', _('Paste a Flowseal strategy first.')));
+            ui.addNotification(null, E('p', _('Paste a zapret-discord-youtube strategy first.')));
             return;
         }
         if (new TextEncoder().encode(text).length > 32768) {
@@ -76,7 +76,7 @@ return view.extend({
         });
         this.input = E('textarea', {
             'class': 'cbi-input-textarea', 'rows': 16,
-            'placeholder': _('Paste the contents of a Flowseal strategy BAT file here')
+            'placeholder': _('Paste the contents of a zapret-discord-youtube strategy BAT file here')
         });
         this.addButton = E('button', {
             'class': 'btn cbi-button-apply',
@@ -84,7 +84,7 @@ return view.extend({
         }, _('Add'));
         return E('div', [
             E('h2', _('Import Strategy')),
-            E('p', { 'class': 'cbi-value-description' }, _('Choose a Flowseal general*.bat file or paste its contents. Update Strategies must install Flowseal assets first. BAT text is converted as data and never executed.')),
+            E('p', { 'class': 'cbi-value-description' }, _('Choose a zapret-discord-youtube general*.bat file or paste its contents. Update Strategies must install the strategy assets first. BAT text is converted as data and never executed.')),
             E('div', { 'class': 'cbi-section' }, [
                 E('div', { 'class': 'cbi-value' }, [
                     E('label', { 'class': 'cbi-value-title' }, _('BAT file')),
@@ -95,6 +95,17 @@ return view.extend({
                     E('div', { 'class': 'cbi-value-field' }, this.input)
                 ]),
                 E('div', { 'class': 'cbi-page-actions' }, this.addButton)
+            ]),
+            E('div', { 'class': 'cbi-section owz-import-lists-note' }, [
+                E('div', {}, [
+                    E('strong', {}, _('Custom lists')),
+                    E('div', { 'class': 'cbi-value-description' },
+                        _('If this strategy relies on custom domain or IP lists, copy those entries on the Lists page after importing it.'))
+                ]),
+                E('a', {
+                    'href': L.url('admin/services/zapret2/settings'),
+                    'class': 'btn cbi-button'
+                }, _('Open Lists'))
             ])
         ]);
     },

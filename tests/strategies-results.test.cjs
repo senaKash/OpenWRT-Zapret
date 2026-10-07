@@ -64,7 +64,7 @@ assert.equal(find(topLayout.children[0], 'h2')[0].children[0], 'Selected Strateg
 assert.equal(find(topLayout.children[1], 'a')[0].children[0], 'Import your strategy');
 assert.equal(find(topLayout.children[1], 'a')[0].attrs.class.includes('cbi-button-apply'), true);
 assert.equal(find(topLayout.children[1], 'button')[0].children[0], 'Update Strategies');
-assert.equal(find(topLayout.children[1], 'span').some(node => node.children[0] === '?' && node.attrs.title.includes('Flowseal')), true);
+assert.equal(find(topLayout.children[1], 'span').some(node => node.children[0] === '?' && node.attrs.title.includes('zapret-discord-youtube')), true);
 assert.equal(find(topLayout.children[0], 'span').some(node => node.children[0] === '$'), true);
 assert.equal(find(dom.children[1], 'table')[0], table);
 assert.equal(find(dom.children[1], 'h2')[0].children[0], 'Strategies');

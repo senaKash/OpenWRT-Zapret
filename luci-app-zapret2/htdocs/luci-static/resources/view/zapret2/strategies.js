@@ -291,10 +291,10 @@ return view.extend({
             let result = await flowsealCheck();
             this.updateFlowsealInfo(result);
             if (!result?.ok && !silent)
-                ui.addNotification(null, E('p', _('Flowseal version check failed: %s').format(result?.error || 'unknown_error')));
+                ui.addNotification(null, E('p', _('zapret-discord-youtube version check failed: %s').format(result?.error || 'unknown_error')));
         }
         catch (e) {
-            if (!silent) ui.addNotification(null, E('p', _('Flowseal version check failed: %s').format(e.message || e)));
+            if (!silent) ui.addNotification(null, E('p', _('zapret-discord-youtube version check failed: %s').format(e.message || e)));
         }
         finally {
             if (!silent) { this.busy = false; this.updateButtons(); }
@@ -308,7 +308,7 @@ return view.extend({
         try {
             let result = await startFlowsealUpdate();
             if (!result?.ok) {
-                ui.addNotification(null, E('p', _('Unable to start Flowseal update: %s').format(result?.error || 'unknown_error')));
+                ui.addNotification(null, E('p', _('Unable to start strategy update: %s').format(result?.error || 'unknown_error')));
             }
             else {
                 this.activeJob = result.job_id;
@@ -317,7 +317,7 @@ return view.extend({
             }
         }
         catch (e) {
-            ui.addNotification(null, E('p', _('Unable to start Flowseal update: %s').format(e.message || e)));
+            ui.addNotification(null, E('p', _('Unable to start strategy update: %s').format(e.message || e)));
         }
         finally {
             this.busy = false;
@@ -404,9 +404,9 @@ return view.extend({
         this.jobProgressRow.hidden = false;
         this.cancelButton.hidden = this.isTerminal(data.status);
         if (data.mode == 'flowseal_update') {
-            if (data.status == 'PENDING') this.jobText.textContent = _('Flowseal update queued');
-            else if (data.status == 'RUNNING') this.jobText.textContent = _('Updating Flowseal strategies…');
-            else this.jobText.textContent = _('Flowseal update: %s').format(data.status || 'UNKNOWN');
+            if (data.status == 'PENDING') this.jobText.textContent = _('Strategy update queued');
+            else if (data.status == 'RUNNING') this.jobText.textContent = _('Updating zapret-discord-youtube strategies…');
+            else this.jobText.textContent = _('Strategy update: %s').format(data.status || 'UNKNOWN');
         }
         else if (data.status == 'RUNNING' && data.stage == 'testing')
             this.jobText.textContent = _('Completed %d / %d').format(current, total) +
@@ -498,12 +498,12 @@ return view.extend({
                     this.showJob(state);
                     if (result?.ok && result.status == 'DONE') {
                         let c = result.report?.counts || {};
-                        ui.addNotification(null, E('p', _('Flowseal updated: added %d, changed %d, unchanged %d, unsupported %d.').format(Number(c.added || 0), Number(c.changed || 0), Number(c.unchanged || 0), Number(c.unsupported || 0))));
+                        ui.addNotification(null, E('p', _('Strategies updated: added %d, changed %d, unchanged %d, unsupported %d.').format(Number(c.added || 0), Number(c.changed || 0), Number(c.unchanged || 0), Number(c.unsupported || 0))));
                     }
                     else if (state.status == 'CANCELLED')
-                        ui.addNotification(null, E('p', _('Flowseal update cancelled.')));
+                        ui.addNotification(null, E('p', _('Strategy update cancelled.')));
                     else
-                        ui.addNotification(null, E('p', _('Flowseal update failed: %s').format(result?.error || state.error || 'unknown_error')));
+                        ui.addNotification(null, E('p', _('Strategy update failed: %s').format(result?.error || state.error || 'unknown_error')));
                     this.updateFlowsealInfo(await flowsealStatus());
                     this.checkFlowseal(true);
                     this.updateProfiles(await listProfiles());
@@ -671,7 +671,7 @@ return view.extend({
                 E('div', { 'class': 'owz-updates-header' }, [
                     E('h2', _('Updates')),
                     E('div', { 'class': 'owz-header-actions' }, [
-                        this.helpIcon(_('Update Strategies imports supported strategies from Flowseal. It never changes the active strategy automatically.')),
+                        this.helpIcon(_('Update Strategies imports supported strategies from zapret-discord-youtube. It never changes the active strategy automatically.')),
                         this.flowsealUpdateButton
                     ])
                 ]),
