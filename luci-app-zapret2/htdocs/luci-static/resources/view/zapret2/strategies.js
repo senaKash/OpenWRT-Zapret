@@ -476,12 +476,18 @@ return view.extend({
             apply.profileCompatible = profile.compatible === true;
             this.rowApplyButtons.push(apply);
             let entry = {
-                result: E('td'), youtube: E('td'), discord: E('td'),
-                cloudflare: E('td'), github: E('td'), tested: E('td')
+                result: E('td', { 'class': 'owz-result-cell' }),
+                youtube: E('td', { 'class': 'owz-probe-cell' }),
+                discord: E('td', { 'class': 'owz-probe-cell' }),
+                cloudflare: E('td', { 'class': 'owz-probe-cell' }),
+                github: E('td', { 'class': 'owz-probe-cell' }),
+                tested: E('td', { 'class': 'owz-tested-cell' })
             };
             entry.row = E('tr', {}, [
-                E('td', profile.name), entry.result, entry.youtube, entry.discord,
-                entry.cloudflare, entry.github, entry.tested, E('td', apply)
+                E('td', { 'class': 'owz-strategy-cell', 'title': profile.name }, profile.name),
+                entry.result, entry.youtube, entry.discord,
+                entry.cloudflare, entry.github, entry.tested,
+                E('td', { 'class': 'owz-action-cell' }, apply)
             ]);
             this.resultRows[profile.id] = entry;
             this.resultsBody.appendChild(entry.row);
@@ -543,18 +549,30 @@ return view.extend({
                 E('div', { 'class': 'owz-actions' }, this.flowsealUpdateButton),
                 E('p', { 'class': 'cbi-value-description' }, _('Source: Flowseal. Strategy BAT files are imported as inert data and are never executed. Windows executables are never run, and updating never changes the active strategy automatically.'))
             ]),
-            E('div', { 'class': 'cbi-section', 'style': 'overflow-x:auto' }, [
+            E('div', { 'class': 'cbi-section' }, [
                 E('h3', _('Test results')),
-                E('table', { 'class': 'table' }, [
-                    E('thead', {}, [ E('tr', {}, [
-                        E('th', { 'style': 'cursor:pointer', 'click': L.bind(this.setSort, this, 'name'), 'title': _('Sort') }, _('Strategy')),
-                        E('th', { 'style': 'cursor:pointer', 'click': L.bind(this.setSort, this, 'result'), 'title': _('Sort') }, _('Result')),
-                        E('th', {}, _('YouTube')), E('th', {}, _('Discord')),
-                        E('th', {}, _('Cloudflare')), E('th', {}, _('GitHub')),
-                        E('th', { 'style': 'cursor:pointer', 'click': L.bind(this.setSort, this, 'tested'), 'title': _('Sort') }, _('Tested')),
-                        E('th', {}, _('Action'))
-                    ]) ]),
-                    this.resultsBody
+                E('div', { 'class': 'owz-results-wrap' }, [
+                    E('table', { 'class': 'table owz-results-table' }, [
+                        E('colgroup', {}, [
+                            E('col', { 'class': 'owz-col-strategy' }),
+                            E('col', { 'class': 'owz-col-result' }),
+                            E('col', { 'class': 'owz-col-probe' }),
+                            E('col', { 'class': 'owz-col-probe' }),
+                            E('col', { 'class': 'owz-col-probe' }),
+                            E('col', { 'class': 'owz-col-probe' }),
+                            E('col', { 'class': 'owz-col-tested' }),
+                            E('col', { 'class': 'owz-col-action' })
+                        ]),
+                        E('thead', {}, [ E('tr', {}, [
+                            E('th', { 'class': 'owz-sortable', 'click': L.bind(this.setSort, this, 'name'), 'title': _('Sort') }, _('Strategy')),
+                            E('th', { 'class': 'owz-sortable', 'click': L.bind(this.setSort, this, 'result'), 'title': _('Sort') }, _('Result')),
+                            E('th', {}, _('YouTube')), E('th', {}, _('Discord')),
+                            E('th', {}, _('Cloudflare')), E('th', {}, _('GitHub')),
+                            E('th', { 'class': 'owz-sortable', 'click': L.bind(this.setSort, this, 'tested'), 'title': _('Sort') }, _('Tested')),
+                            E('th', {}, _('Action'))
+                        ]) ]),
+                        this.resultsBody
+                    ])
                 ])
             ])
         ]);

@@ -19,12 +19,37 @@ STATE_ROOT="$work/state"
 ASSET_ROOT="$STATE_ROOT/assets"
 RUNTIME_ASSET_ROOT="$ASSET_ROOT"
 PROFILE_ROOT="$work/profiles/flowseal"
+RESULT_ROOT="$work/results"
 IMPORT_AWK="$root/luci-app-zapret2/root/usr/libexec/openwrtzapret/flowseal-import.awk"
 version=X
 runtime_base="$RUNTIME_ASSET_ROOT/$version"
 source_root="$work/source"
 jobdir="$work/job"
 mkdir -p "$source_root" "$jobdir"
+
+# Минимальный fake zapret2 проверяет, что updater использует upstream helpers,
+# грузит их один раз и делает один dry-run на совместимый импорт.
+ZAPRET_BASE="$work/zapret2"
+OWZ_ZAPRET2_VALIDATOR_READY=0
+OWZ_TEST_LOAD_LOG="$work/validator-load.log"
+OWZ_TEST_DRY_RUN_LOG="$work/dry-run.log"
+OWZ_TEST_DRY_RUN_FAIL=0
+mkdir -p "$ZAPRET_BASE/common" "$ZAPRET_BASE/nfq2"
+printf '%s\n' 'MODE_FILTER=none' 'QNUM=300' > "$ZAPRET_BASE/config"
+cat > "$ZAPRET_BASE/common/base.sh" <<'EOF'
+printf '%s\n' load >> "$OWZ_TEST_LOAD_LOG"
+contains() { [ "${1#*$2}" != "$1" ]; }
+replace_str() { local a="$1" b="$2"; shift 2; printf '%s\n' "$*" | sed "s#${a}#${b}#g"; }
+EOF
+cat > "$ZAPRET_BASE/common/installer.sh" <<'EOF'
+dry_run_nfqws_() {
+    printf '%s\n' "$*" >> "$OWZ_TEST_DRY_RUN_LOG"
+    [ "${OWZ_TEST_DRY_RUN_FAIL:-0}" = 0 ]
+}
+EOF
+cat > "$ZAPRET_BASE/common/list.sh" <<'EOF'
+filter_apply_hostlist_target() { :; }
+EOF
 
 uci() { return 1; }
 jsonfilter() {
@@ -72,10 +97,33 @@ mkdir -p "$work/stage-1/profiles" "$work/stage-1/assets"
 FLOWSEAL_TOTAL=0
 import_one "$first" "$version" "$source_root" "$work/stage-1/profiles" "$work/stage-1/assets" "$work/stage-1/manifest.tsv"
 grep -q '"compatible": true' "$work/stage-1/profiles/flowseal-x-general-alt12.json"
+[ "$(wc -l < "$OWZ_TEST_LOAD_LOG")" -eq 1 ]
+[ "$(wc -l < "$OWZ_TEST_DRY_RUN_LOG")" -eq 1 ]
+grep -Fq -- "$work/stage-1/assets/" "$OWZ_TEST_DRY_RUN_LOG"
+if grep -Fq -- "$runtime_base/" "$OWZ_TEST_DRY_RUN_LOG"; then exit 1; fi
 printf '%s\n' '{"ok":true}' > "$work/report.json"
+mkdir -p "$RESULT_ROOT"
+printf '%s\n' '{"status":"FAIL"}' > "$RESULT_ROOT/flowseal-stale.json"
+printf '%s\n' '{"status":"PASS"}' > "$RESULT_ROOT/user-keep.json"
 install_staged "$version" "$work/stage-1/profiles" "$work/stage-1/assets" "$work/stage-1/manifest.tsv" "$work/report.json" "$jobdir" deadbeef
+[ ! -e "$RESULT_ROOT/flowseal-stale.json" ]
+[ -f "$RESULT_ROOT/user-keep.json" ]
 old_asset="$ASSET_ROOT/$version/bin/quic_initial_www_google_com.bin"
 [ -f "$old_asset" ]
+
+# На POSIX FS режимы обязаны позволять nfqws2 читать assets после drop-privileges.
+perm_probe="$work/perm-probe"
+: > "$perm_probe"
+chmod 600 "$perm_probe" 2>/dev/null || :
+p600=$(stat -c '%a' "$perm_probe" 2>/dev/null || printf unknown)
+chmod 644 "$perm_probe" 2>/dev/null || :
+p644=$(stat -c '%a' "$perm_probe" 2>/dev/null || printf unknown)
+if [ "$p600" != "$p644" ]; then
+    [ "$(stat -c '%a' "$ASSET_ROOT" 2>/dev/null)" = 755 ]
+    [ "$(stat -c '%a' "$ASSET_ROOT/$version" 2>/dev/null)" = 755 ]
+    [ "$(stat -c '%a' "$ASSET_ROOT/$version/lists" 2>/dev/null)" = 755 ]
+    [ "$(stat -c '%a' "$ASSET_ROOT/$version/lists/list-general-user.txt" 2>/dev/null)" = 644 ]
+fi
 
 # Повторный импорт той же версии создаёт новый requirement из изменённого BAT.
 mkdir -p "$work/second"
@@ -86,6 +134,21 @@ mkdir -p "$work/stage-2/profiles" "$work/stage-2/assets"
 : > "$work/stage-2/manifest.tsv"
 FLOWSEAL_TOTAL=0
 import_one "$second" "$version" "$source_root" "$work/stage-2/profiles" "$work/stage-2/assets" "$work/stage-2/manifest.tsv"
+[ "$(wc -l < "$OWZ_TEST_LOAD_LOG")" -eq 1 ]
+[ "$(wc -l < "$OWZ_TEST_DRY_RUN_LOG")" -eq 2 ]
+
+# Уже несовместимый на этапе конвертации профиль не должен тратить I/O на assets
+# и не должен запускать nfqws2 dry-run.
+bad="$work/general-bad.bat"
+printf '%s\n' '@echo off' 'start "fixture" /min "%BIN%winws.exe" --wf-tcp=443 --filter-tcp=443 --dpi-desync=hostfakesplit --dpi-desync-hostfakesplit-mod=host=ya.ru,altorder=1' > "$bad"
+mkdir -p "$work/stage-bad/profiles" "$work/stage-bad/assets"
+: > "$work/stage-bad/manifest.tsv"
+FLOWSEAL_TOTAL=0
+import_one "$bad" "$version" "$source_root" "$work/stage-bad/profiles" "$work/stage-bad/assets" "$work/stage-bad/manifest.tsv"
+grep -q '"compatible": false' "$work/stage-bad/profiles/flowseal-x-general-bad.json"
+[ "$(wc -l < "$OWZ_TEST_DRY_RUN_LOG")" -eq 2 ]
+[ -z "$(find "$work/stage-bad/assets" -type f -print -quit)" ]
+
 new_profile="$work/stage-2/profiles/flowseal-x-general-alt12.json"
 grep -q '"compatible": true' "$new_profile"
 grep -q 'quic_initial_www_google_com_v2.bin' "$new_profile"
@@ -95,6 +158,19 @@ install_staged "$version" "$work/stage-2/profiles" "$work/stage-2/assets" "$work
 grep -q 'quic_initial_www_google_com_v2.bin' "$PROFILE_ROOT/flowseal-x-general-alt12.json"
 [ -f "$ASSET_ROOT/$version/lists/list-general-user.txt" ]
 [ ! -s "$ASSET_ROOT/$version/lists/list-general-user.txt" ]
+
+# Если штатный dry-run отклоняет NFQWS2_OPT, профиль сохраняется как unsupported,
+# а updater не пытается запускать его в Test All.
+OWZ_TEST_DRY_RUN_FAIL=1
+mkdir -p "$work/stage-fail/profiles" "$work/stage-fail/assets"
+: > "$work/stage-fail/manifest.tsv"
+FLOWSEAL_TOTAL=0
+import_one "$first" "$version" "$source_root" "$work/stage-fail/profiles" "$work/stage-fail/assets" "$work/stage-fail/manifest.tsv"
+grep -q '"compatible": false' "$work/stage-fail/profiles/flowseal-x-general-alt12.json"
+grep -q 'zapret2 dry-run rejected strategy' "$work/stage-fail/profiles/flowseal-x-general-alt12.json"
+[ "$(wc -l < "$OWZ_TEST_LOAD_LOG")" -eq 1 ]
+[ "$(wc -l < "$OWZ_TEST_DRY_RUN_LOG")" -eq 3 ]
+OWZ_TEST_DRY_RUN_FAIL=0
 
 . "$root/luci-app-zapret2/root/usr/libexec/openwrtzapret/service"
 OWZ_PROFILE_BLOBS=$(sed -n 's/^requirements.blobs=//p' "$work/canon-2" | tr ',' '\n')
