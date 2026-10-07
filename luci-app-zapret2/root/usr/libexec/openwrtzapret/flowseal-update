@@ -10,6 +10,7 @@ RESULT_ROOT='/etc/openwrtzapret/state/results'
 ASSET_ROOT="$STATE_ROOT/assets"
 RUNTIME_ASSET_ROOT="/etc/openwrtzapret/flowseal/assets"
 IMPORT_AWK='/usr/libexec/openwrtzapret/flowseal-import.awk'
+LOCK_FILE='/etc/openwrtzapret/state/profile-locks.tsv'
 ZAPRET_BASE='/opt/zapret2'
 OWZ_ZAPRET2_VALIDATOR_READY=0
 MAX_ARCHIVE=16777216
@@ -233,17 +234,19 @@ copy_requirements_from_canon() {
 }
 
 import_one() {
-	local bat="$1" version="$2" source_root="$3" profiles_stage="$4" asset_stage="$5" manifest="$6" file stem key vslug id runtime_base work canon strategy out rc missing content strategy_hash compatible nfq dry_rc
+	local bat="$1" version="$2" source_root="$3" profiles_stage="$4" asset_stage="$5" manifest="$6" prekey="${7:-}" source="${8:-flowseal}" forced_id="${9:-}" forced_name="${10:-}"
+	local file stem key vslug id runtime_base work canon strategy out rc missing content strategy_hash compatible nfq dry_rc
 	file=${bat##*/}; stem=${file%.[bB][aA][tT]}
-	key=$(slugify "$stem"); [ -n "$key" ] || key=strategy
+	[ -n "$forced_name" ] && stem=$forced_name
+	key=$prekey; [ -n "$key" ] || key=$(slugify "$stem"); [ -n "$key" ] || key=strategy
 	vslug=$(slugify "$version"); [ -n "$vslug" ] || return 1
-	id="flowseal-$vslug-$key"
+	id=$forced_id; [ -n "$id" ] || id="flowseal-$vslug-$key"
 	case "$id" in *[!a-z0-9_-]*) return 1;; esac
 	runtime_base="$RUNTIME_ASSET_ROOT/$version"
 	work=$(mktemp -d /tmp/openwrtzapret-flowseal-import.XXXXXX) || return 1
 	canon="$work/canon"; strategy="$work/strategy"; out="$work/profile.json"
 	awk -v runtime_base="$runtime_base" -v game_tcp=12 -v game_udp=12 -v game_mode=none \
-		-v profile_id="$id" -v profile_name="$stem" -v source_version="$version" \
+		-v profile_source="$source" -v profile_id="$id" -v profile_name="$stem" -v source_version="$version" \
 		-v original_file="$file" -v strategy_key="$key" -v canon_file="$canon" \
 		-v strategy_file="$strategy" -v out_file="$out" -f "$IMPORT_AWK" "$bat" || { rm -rf "$work"; return 1; }
 	compatible=$(sed -n 's/^compatible=//p' "$canon" | tail -n 1)
@@ -252,7 +255,7 @@ import_one() {
 		if [ "$rc" -eq 10 ]; then
 			missing=$FLOWSEAL_MISSING
 			awk -v runtime_base="$runtime_base" -v game_tcp=12 -v game_udp=12 -v game_mode=none \
-				-v pre_unsupported="${missing:-missing asset}" -v profile_id="$id" -v profile_name="$stem" -v source_version="$version" \
+				-v pre_unsupported="${missing:-missing asset}" -v profile_source="$source" -v profile_id="$id" -v profile_name="$stem" -v source_version="$version" \
 				-v original_file="$file" -v strategy_key="$key" -v canon_file="$canon" \
 				-v strategy_file="$strategy" -v out_file="$out" -f "$IMPORT_AWK" "$bat" || { rm -rf "$work"; return 1; }
 			compatible=false
@@ -272,7 +275,7 @@ import_one() {
 				# Семантику NFQWS2_OPT проверяет сам zapret2/nfqws2.
 				# Наш импортёр только фиксирует результат как несовместимый профиль.
 				awk -v runtime_base="$runtime_base" -v game_tcp=12 -v game_udp=12 -v game_mode=none \
-					-v pre_unsupported="zapret2 dry-run rejected strategy" -v profile_id="$id" -v profile_name="$stem" -v source_version="$version" \
+					-v pre_unsupported="zapret2 dry-run rejected strategy" -v profile_source="$source" -v profile_id="$id" -v profile_name="$stem" -v source_version="$version" \
 					-v original_file="$file" -v strategy_key="$key" -v canon_file="$canon" \
 					-v strategy_file="$strategy" -v out_file="$out" -f "$IMPORT_AWK" "$bat" || { rm -rf "$work"; return 1; }
 				;;
@@ -288,6 +291,78 @@ import_one() {
 	printf '%s\tsha256:%s\t%s\t%s\n' "$key" "$strategy_hash" "$id" "$compatible" >> "$manifest"
 	rm -rf "$work"
 	return 0
+}
+
+load_flowseal_locks() {
+	local out="$1" id stable key
+	: > "$out" || return 1
+	[ -r "$LOCK_FILE" ] || return 0
+	while IFS="$(printf '\t')" read -r id stable; do
+		case "$id" in flowseal-*) :;; *) continue;; esac
+		case "$stable" in flowseal:*) key=${stable#flowseal:};; *) continue;; esac
+		case "$key" in ''|*[!a-z0-9_-]*) continue;; esac
+		printf '%s\t%s\n' "$key" "$id" >> "$out"
+	done < "$LOCK_FILE"
+}
+
+locked_id_for_key() {
+	local map="$1" wanted="$2" key id
+	[ -s "$map" ] || return 1
+	while IFS="$(printf '\t')" read -r key id; do
+		[ "$key" = "$wanted" ] && { printf '%s' "$id"; return 0; }
+	done < "$map"
+	return 1
+}
+
+preserve_locked_profiles() {
+	local version="$1" profiles="$2" assets="$3" manifest="$4" lockmap="$5" tmp="$6"
+	local key id file old_manifest old_line old_version list req rel dst
+	[ -s "$lockmap" ] || return 0
+	old_manifest="$STATE_ROOT/manifest.tsv"
+	while IFS="$(printf '\t')" read -r key id; do
+		file="$PROFILE_ROOT/$id.json"
+		[ -f "$file" ] && [ ! -L "$file" ] || continue
+		cp "$file" "$profiles/$id.json" && chmod 600 "$profiles/$id.json" || return 1
+		if [ -r "$old_manifest" ]; then
+			old_line=$(awk -F '\t' -v k="$key" '$1==k {print; exit}' "$old_manifest")
+			[ -z "$old_line" ] || printf '%s\n' "$old_line" >> "$manifest"
+		fi
+		old_version=$(jsonfilter -i "$file" -e '@.source_version' 2>/dev/null) || old_version=''
+		[ "$old_version" = "$version" ] || continue
+		for list in '@.requirements.blobs[*]' '@.requirements.hostlists[*]' '@.requirements.ipsets[*]'; do
+			jsonfilter -i "$file" -e "$list" 2>/dev/null | while IFS= read -r req; do
+				case "$req" in "$RUNTIME_ASSET_ROOT/$version/"*) rel=${req#"$RUNTIME_ASSET_ROOT/$version/"};; *) continue;; esac
+				case "$rel" in ''|/*|*..*|*\\*) continue;; esac
+				[ -f "$req" ] && [ ! -L "$req" ] || continue
+				dst="$assets/$rel"; mkdir -p "${dst%/*}" || exit 1; chmod 755 "${dst%/*}" 2>/dev/null || exit 1
+				cp "$req" "$dst" && chmod 644 "$dst" || exit 1
+			done || return 1
+		done
+	done < "$lockmap"
+	return 0
+}
+
+import_user() {
+	local input="$1" version source_root tmp profiles assets manifest stamp id name out compatible
+	case "$input" in /tmp/openwrtzapret-user-import.*) :;; *) printf '%s\n' '{"ok":false,"error":"invalid_import_path"}'; return 1;; esac
+	[ -f "$input" ] && [ ! -L "$input" ] || { printf '%s\n' '{"ok":false,"error":"invalid_import_file"}'; return 1; }
+	version=$(local_version); valid_version "$version" || { printf '%s\n' '{"ok":false,"error":"flowseal_assets_missing"}'; return 1; }
+	source_root="$RUNTIME_ASSET_ROOT/$version"
+	[ -d "$source_root" ] && [ ! -L "$source_root" ] || { printf '%s\n' '{"ok":false,"error":"flowseal_assets_missing"}'; return 1; }
+	tmp=$(mktemp -d /tmp/openwrtzapret-user-profile.XXXXXX) || { printf '%s\n' '{"ok":false,"error":"temp_failed"}'; return 1; }
+	profiles="$tmp/profiles"; assets="$tmp/assets"; manifest="$tmp/manifest.tsv"
+	mkdir -p "$profiles" "$assets" /etc/openwrtzapret/profiles/user || { rm -rf "$tmp"; printf '%s\n' '{"ok":false,"error":"temp_failed"}'; return 1; }
+	chmod 700 "$profiles" /etc/openwrtzapret/profiles/user 2>/dev/null || :; chmod 755 "$assets" 2>/dev/null || :; : > "$manifest"
+	stamp=$(date +%s); id="user-$stamp"; while [ -e "/etc/openwrtzapret/profiles/user/$id.json" ]; do stamp=$((stamp+1)); id="user-$stamp"; done
+	name="User strategy $stamp"
+	FLOWSEAL_TOTAL=0
+	import_one "$input" "$version" "$source_root" "$profiles" "$assets" "$manifest" "user-$stamp" user "$id" "$name" || { rm -rf "$tmp"; printf '%s\n' '{"ok":false,"error":"import_failed"}'; return 1; }
+	out="$profiles/$id.json"; [ -f "$out" ] || { rm -rf "$tmp"; printf '%s\n' '{"ok":false,"error":"import_failed"}'; return 1; }
+	compatible=$(jsonfilter -i "$out" -e '@.compatible' 2>/dev/null) || compatible=false
+	[ "$compatible" = true ] || { rm -rf "$tmp"; printf '%s\n' '{"ok":false,"error":"incompatible_strategy"}'; return 1; }
+	cp "$out" "/etc/openwrtzapret/profiles/user/$id.json" && chmod 600 "/etc/openwrtzapret/profiles/user/$id.json" || { rm -rf "$tmp"; printf '%s\n' '{"ok":false,"error":"install_failed"}'; return 1; }
+	rm -rf "$tmp"
+	printf '{"ok":true,"profile":"%s","name":"%s"}\n' "$id" "$name"
 }
 
 make_diff() {
@@ -402,7 +477,7 @@ install_staged() {
 }
 
 run_update() {
-	local jobdir="$1" tmp api remote rc archive url size archive_hash extract root profiles assets manifest old
+	local jobdir="$1" tmp api remote rc archive url size archive_hash extract root profiles assets manifest old lockmap batfile stem key locked_id
 	case "$jobdir" in /etc/openwrtzapret/state/jobs/[0-9]*-[0-9]*) :;; *) fail_json invalid_job_dir validation; return 0;; esac
 	[ -d "$jobdir" ] && [ ! -L "$jobdir" ] || { fail_json invalid_job_dir validation; return 0; }
 	tmp=$(mktemp -d /tmp/openwrtzapret-flowseal-update.XXXXXX) || { fail_json temp_failed prepare; return 0; }
@@ -426,10 +501,15 @@ run_update() {
 	chmod 700 "$profiles" || { fail_json temp_failed prepare > "$jobdir/result.json"; return 1; }
 	chmod 755 "$assets" || { fail_json temp_failed prepare > "$jobdir/result.json"; return 1; }
 	manifest="$tmp/manifest.tsv"; : > "$manifest"; FLOWSEAL_TOTAL=0
+	lockmap="$tmp/locked-flowseal.tsv"; load_flowseal_locks "$lockmap" || { fail_json lock_state_failed prepare > "$jobdir/result.json"; return 1; }
 	while IFS= read -r bat; do
 		[ ! -e "$jobdir/cancel" ] || { printf '{"ok":true,"mode":"flowseal_update","status":"CANCELLED","source_version":"%s"}\n' "$remote" > "$jobdir/result.json"; return 130; }
-		import_one "$bat" "$remote" "$root" "$profiles" "$assets" "$manifest" || { fail_json import_failed import > "$jobdir/result.json"; return 1; }
+		batfile=${bat##*/}; stem=${batfile%.[bB][aA][tT]}; key=$(slugify "$stem"); [ -n "$key" ] || key=strategy
+		locked_id=$(locked_id_for_key "$lockmap" "$key" 2>/dev/null) || locked_id=''
+		[ -n "$locked_id" ] && continue
+		import_one "$bat" "$remote" "$root" "$profiles" "$assets" "$manifest" "$key" || { fail_json import_failed import > "$jobdir/result.json"; return 1; }
 	done < "$tmp/bats"
+	preserve_locked_profiles "$remote" "$profiles" "$assets" "$manifest" "$lockmap" "$tmp" || { fail_json locked_profile_preserve_failed import > "$jobdir/result.json"; return 1; }
 	old="$STATE_ROOT/manifest.tsv"; [ -r "$old" ] || old="$tmp/empty"; : > "$tmp/empty"
 	make_diff "$manifest" "$old" "$tmp/diff.tsv" || { fail_json diff_failed import > "$jobdir/result.json"; return 1; }
 	make_report "$remote" "$archive_hash" "$tmp/diff.tsv" "$tmp/report.json" || { fail_json report_failed import > "$jobdir/result.json"; return 1; }
@@ -447,5 +527,6 @@ case "${1:-}" in
 	status) [ "$#" -eq 1 ] && status_json || exit 64;;
 	check) [ "$#" -eq 1 ] && check_json || exit 64;;
 	run) [ "$#" -eq 2 ] && run_update "$2" || exit 64;;
+	import-user) [ "$#" -eq 2 ] && import_user "$2" || exit 64;;
 	*) exit 64;;
 esac

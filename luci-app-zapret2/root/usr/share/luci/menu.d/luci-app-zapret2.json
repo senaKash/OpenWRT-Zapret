@@ -7,11 +7,14 @@
 			"path": "admin/services/zapret2/dashboard"
 		},
 		"depends": {
-			"acl": [ "luci-app-zapret2" ],
-			"uci": { "zapret2": true }
+			"acl": [
+				"luci-app-zapret2"
+			],
+			"uci": {
+				"zapret2": true
+			}
 		}
 	},
-
 	"admin/services/zapret2/dashboard": {
 		"title": "Dashboard",
 		"order": 10,
@@ -20,7 +23,6 @@
 			"path": "zapret2/dashboard"
 		}
 	},
-
 	"admin/services/zapret2/service": {
 		"title": "Diagnostics & Tools",
 		"order": 15,
@@ -29,7 +31,6 @@
 			"path": "zapret2/service"
 		}
 	},
-
 	"admin/services/zapret2/strategies": {
 		"title": "Strategies",
 		"order": 18,
@@ -38,7 +39,6 @@
 			"path": "zapret2/strategies"
 		}
 	},
-
 	"admin/services/zapret2/settings": {
 		"title": "Manual / Advanced",
 		"order": 20,
@@ -47,13 +47,25 @@
 			"path": "zapret2/settings"
 		}
 	},
-
 	"admin/services/zapret2/dmnlog": {
 		"title": "Log Viewer",
 		"order": 30,
 		"action": {
 			"type": "view",
 			"path": "zapret2/dmnlog"
+		}
+	},
+	"admin/services/zapret2/import": {
+		"title": "Import Strategy",
+		"order": 19,
+		"action": {
+			"type": "view",
+			"path": "zapret2/import"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-zapret2"
+			]
 		}
 	}
 }

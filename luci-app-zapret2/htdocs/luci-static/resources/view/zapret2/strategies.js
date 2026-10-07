@@ -19,6 +19,8 @@ const cancelJob = rpc.declare({ object: 'openwrtzapret', method: 'cancel_job', p
 const flowsealStatus = rpc.declare({ object: 'openwrtzapret', method: 'flowseal_status', expect: { '': {} }, reject: true });
 const flowsealCheck = rpc.declare({ object: 'openwrtzapret', method: 'flowseal_check', expect: { '': {} }, reject: true });
 const startFlowsealUpdate = rpc.declare({ object: 'openwrtzapret', method: 'start_flowseal_update', expect: { '': {} }, reject: true });
+const setProfileLock = rpc.declare({ object: 'openwrtzapret', method: 'set_profile_lock', params: [ 'id', 'locked' ], expect: { '': {} }, reject: true });
+const deleteProfile = rpc.declare({ object: 'openwrtzapret', method: 'delete_profile', params: [ 'id' ], expect: { '': {} }, reject: true });
 
 document.head.appendChild(E('link', {
     rel: 'stylesheet',
@@ -101,9 +103,13 @@ return view.extend({
         if (this.cancelButton) this.cancelButton.disabled = !this.testing || !this.activeJob;
         if (this.flowsealUpdateButton) this.flowsealUpdateButton.disabled = locked;
         for (let button of (this.rowApplyButtons || [])) button.disabled = locked || button.profileCompatible !== true;
+        for (let button of (this.rowLockButtons || [])) button.disabled = locked;
+        for (let button of (this.rowDeleteButtons || []))
+            button.disabled = locked || button.profileLocked === true || button.profileId == this.activeProfileId;
     },
 
     updateActiveProfile: function(id) {
+        this.activeProfileId = id || null;
         let active = this.profiles.find(p => p.id == id);
         this.active.textContent = active ? active.name : (id || _('Manual / Settings'));
         this.active.className = this.badgeClass('neutral');
@@ -172,6 +178,45 @@ return view.extend({
             this.busy = false;
             this.updateButtons();
         }
+    },
+
+    toggleProfileLock: async function(id) {
+        let profile = this.profiles.find(p => p.id == id);
+        if (!profile || this.busy || this.testing) return;
+        this.busy = true;
+        this.updateButtons();
+        try {
+            let result = await setProfileLock(id, profile.locked !== true);
+            if (!result?.ok)
+                ui.addNotification(null, E('p', _('Unable to change strategy lock: %s').format(result?.error || 'unknown_error')));
+            this.updateProfiles(await listProfiles());
+        }
+        catch (e) {
+            ui.addNotification(null, E('p', _('Unable to change strategy lock: %s').format(e.message || e)));
+        }
+        finally { this.busy = false; this.updateButtons(); }
+    },
+
+    removeProfile: async function(id) {
+        let profile = this.profiles.find(p => p.id == id);
+        if (!profile || profile.locked === true || this.busy || this.testing) return;
+        if (id == this.activeProfileId) {
+            ui.addNotification(null, E('p', _('Switch to another strategy before deleting the active one.')));
+            return;
+        }
+        this.busy = true;
+        this.updateButtons();
+        try {
+            let result = await deleteProfile(id);
+            if (!result?.ok)
+                ui.addNotification(null, E('p', _('Unable to delete strategy: %s').format(result?.error || 'unknown_error')));
+            else
+                this.updateProfiles(await listProfiles());
+        }
+        catch (e) {
+            ui.addNotification(null, E('p', _('Unable to delete strategy: %s').format(e.message || e)));
+        }
+        finally { this.busy = false; this.updateButtons(); }
     },
 
     updateFlowsealInfo: function(data) {
@@ -457,6 +502,8 @@ return view.extend({
         this.resultsBody.replaceChildren();
         this.resultRows = Object.create(null);
         this.rowApplyButtons = [];
+        this.rowLockButtons = [];
+        this.rowDeleteButtons = [];
         let profiles = Array.from(this.profiles);
         let key = this.sortKey, direction = this.sortAsc ? 1 : -1;
         profiles.sort((a, b) => {
@@ -467,7 +514,8 @@ return view.extend({
             if (typeof av == 'number') return direction * (av - bv);
             return direction * String(av).localeCompare(String(bv));
         });
-        for (let profile of profiles) {
+        for (let index = 0; index < profiles.length; index++) {
+            let profile = profiles[index];
             let apply = E('button', {
                 'class': 'btn cbi-button-apply',
                 'disabled': profile.compatible !== true || this.testing,
@@ -475,6 +523,24 @@ return view.extend({
             }, _('Apply'));
             apply.profileCompatible = profile.compatible === true;
             this.rowApplyButtons.push(apply);
+            let lock = E('button', {
+                'class': 'btn owz-icon-button owz-lock-button',
+                'title': profile.locked === true ? _('Unlock strategy') : _('Lock strategy'),
+                'aria-label': profile.locked === true ? _('Unlock strategy') : _('Lock strategy'),
+                'click': L.bind(this.toggleProfileLock, this, profile.id)
+            }, profile.locked === true ? '🔒' : '🔓');
+            lock.profileId = profile.id;
+            this.rowLockButtons.push(lock);
+            let remove = E('button', {
+                'class': 'btn cbi-button-negative owz-icon-button owz-delete-button',
+                'title': _('Delete strategy'),
+                'aria-label': _('Delete strategy'),
+                'disabled': profile.locked === true || profile.id == this.activeProfileId,
+                'click': L.bind(this.removeProfile, this, profile.id)
+            }, '🗑');
+            remove.profileId = profile.id;
+            remove.profileLocked = profile.locked === true;
+            this.rowDeleteButtons.push(remove);
             let entry = {
                 result: E('td', { 'class': 'owz-result-cell' }),
                 youtube: E('td', { 'class': 'owz-probe-cell' }),
@@ -484,10 +550,13 @@ return view.extend({
                 tested: E('td', { 'class': 'owz-tested-cell' })
             };
             entry.row = E('tr', {}, [
-                E('td', { 'class': 'owz-strategy-cell', 'title': profile.name }, profile.name),
+                E('td', { 'class': 'owz-index-cell' }, String(index + 1)),
+                E('td', { 'class': 'owz-strategy-cell', 'title': profile.name }, [
+                    E('span', { 'class': 'owz-strategy-name' }, profile.name), lock
+                ]),
                 entry.result, entry.youtube, entry.discord,
                 entry.cloudflare, entry.github, entry.tested,
-                E('td', { 'class': 'owz-action-cell' }, apply)
+                E('td', { 'class': 'owz-action-cell' }, [apply, remove])
             ]);
             this.resultRows[profile.id] = entry;
             this.resultsBody.appendChild(entry.row);
@@ -525,7 +594,7 @@ return view.extend({
                     E('label', { 'class': 'cbi-value-title' }, _('Strategy')),
                     E('div', { 'class': 'cbi-value-field' }, this.selector)
                 ]),
-                E('div', { 'class': 'owz-actions' }, [this.applyButton, this.testButton, this.testAllButton]),
+                E('div', { 'class': 'owz-actions' }, [this.testButton, this.applyButton]),
                 E('div', { 'class': 'cbi-value' }, [
                     E('label', { 'class': 'cbi-value-title' }, _('Job')),
                     E('div', { 'class': 'cbi-value-field' }, [this.jobText, this.jobProgressRow])
@@ -533,7 +602,10 @@ return view.extend({
                 E('p', { 'class': 'cbi-value-description' }, _('Tests temporarily activate a strategy, check HTTPS from the router, and restore the previous configuration. LAN client traffic may differ.'))
             ]),
             E('div', { 'class': 'cbi-section' }, [
-                E('h3', _('Updates')),
+                E('div', { 'class': 'owz-section-heading' }, [
+                    E('h3', _('Updates')),
+                    E('a', { 'href': L.url('admin/services/zapret2/import'), 'class': 'owz-import-link' }, _('Import your strategy'))
+                ]),
                 E('div', { 'class': 'cbi-value' }, [
                     E('label', { 'class': 'cbi-value-title' }, _('Local')),
                     E('div', { 'class': 'cbi-value-field' }, this.flowsealLocal)
@@ -546,7 +618,7 @@ return view.extend({
                     E('label', { 'class': 'cbi-value-title' }, _('Status')),
                     E('div', { 'class': 'cbi-value-field' }, this.flowsealSummary)
                 ]),
-                E('div', { 'class': 'owz-actions' }, this.flowsealUpdateButton),
+                E('div', { 'class': 'owz-actions' }, [this.flowsealUpdateButton, this.testAllButton]),
                 E('p', { 'class': 'cbi-value-description' }, _('Source: Flowseal. Strategy BAT files are imported as inert data and are never executed. Windows executables are never run, and updating never changes the active strategy automatically.'))
             ]),
             E('div', { 'class': 'cbi-section' }, [
@@ -554,6 +626,7 @@ return view.extend({
                 E('div', { 'class': 'owz-results-wrap' }, [
                     E('table', { 'class': 'table owz-results-table' }, [
                         E('colgroup', {}, [
+                            E('col', { 'class': 'owz-col-index' }),
                             E('col', { 'class': 'owz-col-strategy' }),
                             E('col', { 'class': 'owz-col-result' }),
                             E('col', { 'class': 'owz-col-probe' }),
@@ -564,6 +637,7 @@ return view.extend({
                             E('col', { 'class': 'owz-col-action' })
                         ]),
                         E('thead', {}, [ E('tr', {}, [
+                            E('th', { 'class': 'owz-index-cell' }, '#'),
                             E('th', { 'class': 'owz-sortable', 'click': L.bind(this.setSort, this, 'name'), 'title': _('Sort') }, _('Strategy')),
                             E('th', { 'class': 'owz-sortable', 'click': L.bind(this.setSort, this, 'result'), 'title': _('Sort') }, _('Result')),
                             E('th', {}, _('YouTube')), E('th', {}, _('Discord')),

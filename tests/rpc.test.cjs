@@ -23,7 +23,7 @@ const methods = vm.runInNewContext(`(function(){${code}\n})()`, {
 }).openwrtzapret;
 const commandArgs = command => typeof command === 'string' ? command.split(' ') : Array.from(command);
 
-assert.deepEqual(Object.keys(methods), ['status', 'profile_active', 'start', 'stop', 'restart', 'set_manual', 'list_profiles', 'get_profile', 'get_profile_result', 'apply_profile', 'start_test', 'start_test_all', 'flowseal_status', 'flowseal_check', 'start_flowseal_update', 'current_job', 'job_status', 'job_result', 'cancel_job']);
+assert.deepEqual(Object.keys(methods), ['status', 'profile_active', 'start', 'stop', 'restart', 'set_manual', 'list_profiles', 'get_profile', 'get_profile_result', 'set_profile_lock', 'delete_profile', 'import_user_strategy', 'apply_profile', 'start_test', 'start_test_all', 'flowseal_status', 'flowseal_check', 'start_flowseal_update', 'current_job', 'job_status', 'job_result', 'cancel_job']);
 for (const action of ['status', 'start', 'stop', 'restart']) {
     assert.equal(methods[action].call().state, 'STOPPED');
     assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', action]);
@@ -36,7 +36,7 @@ assert.equal(methods.apply_profile.call({ args: { id: '../bad' } }).error, 'inva
 reply = '{"ok":true,"profile":null}';
 assert.equal(methods.apply_profile.call({ args: { id: 'builtin-default' } }).ok, true);
 assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'apply_profile', 'builtin-default']);
-reply = '{"ok":true,"profiles":[{"id":"builtin-default","name":"Default","content_hash":"sha256:test","source_version":"1"}],"active_profile":"builtin-default"}';
+reply = '{"ok":true,"profiles":[{"id":"builtin-default","name":"Default","content_hash":"sha256:test","source_version":"1"}],"active_profile":"builtin-default","locked_profiles":["builtin-default"]}';
 readFileValue = '{"profile_id":"builtin-default","content_hash":"sha256:test","source_version":"1","status":"PASS"}';
 let beforeList = commands.length;
 let listing = methods.list_profiles.call();
@@ -44,6 +44,7 @@ assert.equal(commands.length - beforeList, 1);
 assert.equal(listing.profiles.length, 1);
 assert.equal(listing.profiles[0].latest_result.status, 'PASS');
 assert.equal(listing.active_profile, 'builtin-default');
+assert.equal(listing.profiles[0].locked, true);
 assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'profile_list']);
 
 reply = '{"ok":true,"profile":{"id":"builtin-default","name":"Default","content_hash":"sha256:test","source_version":"1"}}';
@@ -59,6 +60,16 @@ assert.equal(directResult.result.status, 'PASS');
 assert.equal(commands.length, beforeResult);
 assert.equal(methods.get_profile_result.call({ args: { id: '../bad' } }).error, 'invalid_profile_id');
 assert.equal(commands.length, beforeResult);
+
+reply = '{"ok":true,"profile":"builtin-default","locked":true}';
+assert.equal(methods.set_profile_lock.call({ args: { id: 'builtin-default', locked: true } }).locked, true);
+assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'profile_lock', 'builtin-default']);
+reply = '{"ok":true,"profile":"builtin-default"}';
+assert.equal(methods.delete_profile.call({ args: { id: 'builtin-default' } }).ok, true);
+assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'profile_delete', 'builtin-default']);
+reply = '{"ok":true,"profile":"user-1"}';
+assert.equal(methods.import_user_strategy.call({ args: { data: 'QUJD' } }).ok, true);
+assert.deepEqual(commandArgs(commands.at(-1)), ['/usr/libexec/openwrtzapret/service', 'profile_import_user', 'QUJD']);
 
 reply = '{"ok":true,"job_id":"123-456","status":"PENDING"}';
 assert.equal(methods.start_test.call({ args: { id: 'builtin-default' } }).ok, true);

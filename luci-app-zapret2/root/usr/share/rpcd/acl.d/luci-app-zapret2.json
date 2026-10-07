@@ -82,7 +82,10 @@
 					"start_test",
 					"start_test_all",
 					"cancel_job",
-					"start_flowseal_update"
+					"start_flowseal_update",
+					"set_profile_lock",
+					"delete_profile",
+					"import_user_strategy"
 				]
 			},
 			"file": {

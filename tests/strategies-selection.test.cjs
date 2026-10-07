@@ -6,7 +6,7 @@ const code = fs.readFileSync('luci-app-zapret2/htdocs/luci-static/resources/view
 const acl = JSON.parse(fs.readFileSync('luci-app-zapret2/root/usr/share/rpcd/acl.d/luci-app-zapret2.json', 'utf8'))['luci-app-zapret2'];
 for (const method of ['list_profiles', 'get_profile_result', 'profile_active', 'current_job', 'job_status', 'job_result', 'flowseal_status', 'flowseal_check'])
     assert.ok(acl.read.ubus.openwrtzapret.includes(method), method);
-for (const method of ['apply_profile', 'set_manual', 'start_test', 'start_test_all', 'cancel_job', 'start_flowseal_update'])
+for (const method of ['apply_profile', 'set_manual', 'start_test', 'start_test_all', 'cancel_job', 'start_flowseal_update', 'set_profile_lock', 'delete_profile', 'import_user_strategy'])
     assert.ok(acl.write.ubus.openwrtzapret.includes(method), method);
 const calls = [];
 const profiles = [
@@ -35,7 +35,7 @@ const context = {
     view: { extend: value => value },
     _: value => value,
     E: (tag, attrs, text) => ({ tag, attrs, text }),
-    L: { bind: (fn, receiver, ...args) => fn.bind(receiver, ...args), resource: path => path },
+    L: { bind: (fn, receiver, ...args) => fn.bind(receiver, ...args), resource: path => path, url: path => path },
     document: { head: { appendChild() {} } },
     ui: { addNotification: () => {} },
     poll: { add: () => {} }

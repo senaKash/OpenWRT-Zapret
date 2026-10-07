@@ -45,11 +45,12 @@
     border-spacing: 0;
 }
 
-.owz-results-table .owz-col-strategy { width: 27%; }
+.owz-results-table .owz-col-index    { width: 3.5rem; }
+.owz-results-table .owz-col-strategy { width: 25%; }
 .owz-results-table .owz-col-result   { width: 18%; }
 .owz-results-table .owz-col-probe    { width: 8%; }
 .owz-results-table .owz-col-tested   { width: 15%; }
-.owz-results-table .owz-col-action   { width: 8%; }
+.owz-results-table .owz-col-action   { width: 10%; }
 
 .owz-results-table thead th {
     padding: .6rem .65rem;
@@ -129,3 +130,48 @@
 .owz-results-table .owz-action-cell .btn {
     margin: 0;
 }
+
+
+.owz-section-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.owz-section-heading h3 { margin-right: auto; }
+.owz-import-link { white-space: nowrap; font-size: .92em; }
+
+.owz-index-cell {
+    text-align: center !important;
+    white-space: nowrap;
+    opacity: .72;
+}
+
+.owz-strategy-cell {
+    display: table-cell;
+}
+
+.owz-strategy-name {
+    display: inline-block;
+    max-width: calc(100% - 2.2rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+}
+
+.owz-icon-button {
+    min-width: 2rem;
+    margin: 0 !important;
+    padding: .18rem .42rem;
+    line-height: 1.2;
+    vertical-align: middle;
+}
+
+.owz-lock-button {
+    margin-left: .35rem !important;
+    border-color: transparent;
+    background: transparent;
+}
+
+.owz-action-cell .btn + .btn { margin-left: .35rem !important; }

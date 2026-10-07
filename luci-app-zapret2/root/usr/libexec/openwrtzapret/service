@@ -6,6 +6,7 @@ OWZ_JOB_ROOT=$OWZ_DATA/jobs
 OWZ_RESULT_ROOT=$OWZ_DATA/results
 OWZ_JOURNAL=$OWZ_DATA/journal
 OWZ_FLOWSEAL_UPDATE=/usr/libexec/openwrtzapret/flowseal-update
+OWZ_PROFILE_LOCKS=$OWZ_DATA/profile-locks.tsv
 owz_init() { /etc/init.d/zapret2 "$1" >/dev/null 2>&1; }
 owz_sync() {
 	if [ "${1:-}" = skip_active ]; then
@@ -132,7 +133,7 @@ owz_owner_active() {
 	[ -r "$owner_dir/owner" ] || return 1
 	read -r pid action stamp < "$owner_dir/owner" || return 1
 	case "$pid:$stamp" in *[!0-9:]*|:*|*:) return 1;; esac
-	case "$action" in start|stop|restart|apply_profile|set_manual|job_start|job_run|job_recover) :;; *) return 1;; esac
+	case "$action" in start|stop|restart|apply_profile|set_manual|job_start|job_run|job_recover|profile_lock|profile_unlock|profile_delete|profile_import_user) :;; *) return 1;; esac
 	[ -r "/proc/$pid/cmdline" ] || return 1
 	cmdline=$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || return 1
 	case "$cmdline" in *openwrtzapret/service*" $action"*) return 0;; esac
@@ -557,6 +558,87 @@ owz_job_meta_set_pid() {
 	awk -v pid="$pid" 'BEGIN{done=0} /^worker_pid=/{if(!done){print "worker_pid=" pid; done=1} next} {print} END{if(!done) print "worker_pid=" pid}' "$file" > "$tmp" && mv -f "$tmp" "$file"
 }
 
+owz_profile_is_locked() {
+	local wanted="$1" id key
+	[ -r "$OWZ_PROFILE_LOCKS" ] || return 1
+	while IFS="$(printf '\t')" read -r id key; do
+		[ "$id" = "$wanted" ] && return 0
+	done < "$OWZ_PROFILE_LOCKS"
+	return 1
+}
+
+owz_profile_stable_key() {
+	local id="$1" key
+	owz_profile_load "$id" || return 1
+	if [ "$OWZ_PROFILE_SOURCE" = flowseal ]; then
+		key=$(jsonfilter -i "$OWZ_PROFILE_FILE" -e '@.import.strategy_key' 2>/dev/null) || return 1
+		case "$key" in ''|*[!a-z0-9_-]*) return 1;; esac
+		printf 'flowseal:%s' "$key"
+	else
+		printf '%s:%s' "$OWZ_PROFILE_SOURCE" "$id"
+	fi
+}
+
+owz_profile_locks_json() {
+	local first=true id key
+	printf '['
+	if [ -r "$OWZ_PROFILE_LOCKS" ]; then
+		while IFS="$(printf '\t')" read -r id key; do
+			case "$id" in builtin-*|flowseal-*|user-*) case "$id" in *[!a-z0-9_-]*) continue;; esac;; *) continue;; esac
+			if [ "$first" = true ]; then first=false; else printf ','; fi
+			printf '"%s"' "$id"
+		done < "$OWZ_PROFILE_LOCKS"
+	fi
+	printf ']'
+}
+
+owz_profile_lock_set() {
+	local action="$1" id="$2" stable tmp oldid oldkey
+	case "$id" in builtin-*|flowseal-*|user-*) case "$id" in *[!a-z0-9_-]*) exit 64;; esac;; *) exit 64;; esac
+	if ! owz_lock "$action"; then printf '%s\n' '{"ok":false,"error":"busy"}'; return 0; fi
+	stable=$(owz_profile_stable_key "$id") || { printf '%s\n' '{"ok":false,"error":"invalid_profile"}'; return 0; }
+	mkdir -p "$OWZ_DATA" || { printf '%s\n' '{"ok":false,"error":"state_write_failed"}'; return 0; }
+	chmod 700 "$OWZ_DATA" 2>/dev/null || :
+	tmp="$OWZ_PROFILE_LOCKS.tmp.$$"
+	: > "$tmp" || { printf '%s\n' '{"ok":false,"error":"state_write_failed"}'; return 0; }
+	chmod 600 "$tmp" 2>/dev/null || :
+	if [ -r "$OWZ_PROFILE_LOCKS" ]; then
+		while IFS="$(printf '\t')" read -r oldid oldkey; do
+			[ "$oldid" = "$id" ] || printf '%s\t%s\n' "$oldid" "$oldkey" >> "$tmp"
+		done < "$OWZ_PROFILE_LOCKS"
+	fi
+	if [ "$action" = profile_lock ]; then printf '%s\t%s\n' "$id" "$stable" >> "$tmp"; fi
+	mv -f "$tmp" "$OWZ_PROFILE_LOCKS" || { rm -f "$tmp"; printf '%s\n' '{"ok":false,"error":"state_write_failed"}'; return 0; }
+	printf '{"ok":true,"profile":"%s","locked":%s}\n' "$id" "$( [ "$action" = profile_lock ] && printf true || printf false )"
+}
+
+owz_profile_delete() {
+	local id="$1" active file
+	case "$id" in builtin-*|flowseal-*|user-*) case "$id" in *[!a-z0-9_-]*) exit 64;; esac;; *) exit 64;; esac
+	if ! owz_lock profile_delete; then printf '%s\n' '{"ok":false,"error":"busy"}'; return 0; fi
+	owz_profile_is_locked "$id" && { printf '%s\n' '{"ok":false,"error":"profile_locked"}'; return 0; }
+	active=$(uci -q get zapret2.config.active_profile 2>/dev/null) || active=''
+	[ "$active" != "$id" ] || { printf '%s\n' '{"ok":false,"error":"active_profile"}'; return 0; }
+	file=$(owz_profile_file "$id") || { printf '%s\n' '{"ok":false,"error":"invalid_profile"}'; return 0; }
+	rm -f "$file" "$OWZ_RESULT_ROOT/$id.json" || { printf '%s\n' '{"ok":false,"error":"delete_failed"}'; return 0; }
+	printf '{"ok":true,"profile":"%s"}\n' "$id"
+}
+
+owz_profile_import_user() {
+	local data="$1" tmp out rc
+	[ -n "$data" ] && [ "${#data}" -le 49152 ] || { printf '%s\n' '{"ok":false,"error":"strategy_too_large"}'; return 0; }
+	case "$data" in *[!A-Za-z0-9+/=]*) printf '%s\n' '{"ok":false,"error":"invalid_strategy_encoding"}'; return 0;; esac
+	if ! owz_lock profile_import_user; then printf '%s\n' '{"ok":false,"error":"busy"}'; return 0; fi
+	tmp=$(mktemp /tmp/openwrtzapret-user-import.XXXXXX) || { printf '%s\n' '{"ok":false,"error":"temp_failed"}'; return 0; }
+	chmod 600 "$tmp"
+	if ! printf '%s' "$data" | /bin/busybox base64 -d > "$tmp" 2>/dev/null; then rm -f "$tmp"; printf '%s\n' '{"ok":false,"error":"invalid_strategy_encoding"}'; return 0; fi
+	[ "$(wc -c < "$tmp" 2>/dev/null)" -le 32768 ] || { rm -f "$tmp"; printf '%s\n' '{"ok":false,"error":"strategy_too_large"}'; return 0; }
+	out=$("$OWZ_FLOWSEAL_UPDATE" import-user "$tmp" 2>/dev/null); rc=$?
+	rm -f "$tmp"
+	[ "$rc" -eq 0 ] && [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
+	printf '%s\n' '{"ok":false,"error":"import_failed"}'
+}
+
 owz_profile_ids() {
 	local root file id
 	for root in /usr/share/openwrtzapret/profiles/builtin /etc/openwrtzapret/profiles/flowseal /etc/openwrtzapret/profiles/user; do
@@ -585,6 +667,8 @@ owz_profile_list() {
 	done
 	printf '],"active_profile":'
 	if [ -n "$active_profile" ]; then printf '"%s"' "$active_profile"; else printf 'null'; fi
+	printf ',"locked_profiles":'
+	owz_profile_locks_json
 	printf '}\n'
 }
 
@@ -1115,6 +1199,10 @@ if [ "${0##*/}" = service ]; then
 		profile_active) [ "$#" -eq 1 ] && owz_profile_active;;
 		profile_list) [ "$#" -eq 1 ] && owz_profile_list;;
 		profile_get) [ "$#" -eq 2 ] && owz_profile_get "$2";;
+		profile_lock) [ "$#" -eq 2 ] && owz_profile_lock_set profile_lock "$2";;
+		profile_unlock) [ "$#" -eq 2 ] && owz_profile_lock_set profile_unlock "$2";;
+		profile_delete) [ "$#" -eq 2 ] && owz_profile_delete "$2";;
+		profile_import_user) [ "$#" -eq 2 ] && owz_profile_import_user "$2";;
 		profile_check) [ "$#" -eq 2 ] && { owz_profile_load "$2" && printf '%s\n' '{"ok":true}' || printf '%s\n' '{"ok":false,"error":"invalid_profile"}'; };;
 		profile_overlay_active) [ "$#" -eq 1 ] && owz_profile_overlay_active;;
 		apply_profile) [ "$#" -eq 2 ] && owz_apply_profile "$2";;

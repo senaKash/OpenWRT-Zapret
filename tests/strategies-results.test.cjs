@@ -27,7 +27,7 @@ const context = {
     view: { extend: value => value },
     _: value => value,
     E,
-    L: { bind: (fn, receiver, ...args) => fn.bind(receiver, ...args), resource: path => path },
+    L: { bind: (fn, receiver, ...args) => fn.bind(receiver, ...args), resource: path => path, url: path => path },
     document: { head: { appendChild() {} } },
     ui: { addNotification: () => {} },
     poll: { add: () => {} }
@@ -49,29 +49,30 @@ const dom = page.render([{ ok: true, profiles: [profile] }, {}, {
 const table = find(dom, 'table')[0];
 const headers = find(find(table, 'thead')[0], 'th');
 assert.deepEqual(headers.map(header => header.children[0]),
-    ['Strategy', 'Result', 'YouTube', 'Discord', 'Cloudflare', 'GitHub', 'Tested', 'Action']);
+    ['#', 'Strategy', 'Result', 'YouTube', 'Discord', 'Cloudflare', 'GitHub', 'Tested', 'Action']);
 
 assert.equal(table.attrs.class.includes('owz-results-table'), true);
 const colgroup = find(table, 'colgroup')[0];
 const cols = find(colgroup, 'col');
-assert.equal(cols.length, 8);
+assert.equal(cols.length, 9);
 assert.deepEqual(cols.map(col => col.attrs.class), [
-    'owz-col-strategy', 'owz-col-result',
+    'owz-col-index', 'owz-col-strategy', 'owz-col-result',
     'owz-col-probe', 'owz-col-probe', 'owz-col-probe', 'owz-col-probe',
     'owz-col-tested', 'owz-col-action'
 ]);
-assert.equal(headers[0].attrs.class, 'owz-sortable');
 assert.equal(headers[1].attrs.class, 'owz-sortable');
-assert.equal(headers[6].attrs.class, 'owz-sortable');
+assert.equal(headers[2].attrs.class, 'owz-sortable');
+assert.equal(headers[7].attrs.class, 'owz-sortable');
 let cells = find(page.resultsBody, 'td');
 assert.equal(cells.length, headers.length);
-assert.equal(cells[0].attrs.class, 'owz-strategy-cell');
-assert.equal(cells[1].attrs.class, 'owz-result-cell');
-assert.equal(cells[2].attrs.class, 'owz-probe-cell');
-assert.equal(cells[6].attrs.class, 'owz-tested-cell');
-assert.equal(cells[7].attrs.class, 'owz-action-cell');
-assert.equal(cells[4].children[0], '—');
+assert.equal(cells[0].attrs.class, 'owz-index-cell');
+assert.equal(cells[1].attrs.class, 'owz-strategy-cell');
+assert.equal(cells[2].attrs.class, 'owz-result-cell');
+assert.equal(cells[3].attrs.class, 'owz-probe-cell');
+assert.equal(cells[7].attrs.class, 'owz-tested-cell');
+assert.equal(cells[8].attrs.class, 'owz-action-cell');
 assert.equal(cells[5].children[0], '—');
+assert.equal(cells[6].children[0], '—');
 assert.equal(page.stateBadge.textContent, 'RUNNING');
 
 profile.latest_result = {
@@ -81,12 +82,12 @@ profile.latest_result = {
 page.renderResults();
 cells = find(page.resultsBody, 'td');
 assert.equal(cells.length, headers.length);
-assert.equal(cells[1].children[0].children[0], 'PARTIAL');
-assert.equal(cells[1].children[1].children[0], 'missing requirement: /tmp/example.bin');
-assert.equal(cells[2].children[0].children[0], 'PASS');
+assert.equal(cells[2].children[0].children[0], 'PARTIAL');
+assert.equal(cells[2].children[1].children[0], 'missing requirement: /tmp/example.bin');
 assert.equal(cells[3].children[0].children[0], 'PASS');
-assert.equal(cells[4].children[0].children[0], 'FAIL');
-assert.equal(cells[5].children[0].children[0], 'PASS');
+assert.equal(cells[4].children[0].children[0], 'PASS');
+assert.equal(cells[5].children[0].children[0], 'FAIL');
+assert.equal(cells[6].children[0].children[0], 'PASS');
 assert.equal(find(table, 'thead').length, 1);
 const row = page.resultRows[profile.id].row;
 page.showJob({ job_id: '1-2', status: 'RUNNING', stage: 'testing', profile_id: profile.id, current: 17, total: 21 });
@@ -99,7 +100,7 @@ assert.equal(page.jobText.textContent.includes('general (ALT12)'), true);
 assert.equal(page.stateBadge.textContent, 'TESTING');
 assert.equal(page.resultRows[profile.id].row, row);
 assert.equal(row.className, 'owz-current-row');
-assert.equal(cells[1].children[0].children[0], 'TESTING');
+assert.equal(cells[2].children[0].children[0], 'TESTING');
 const next = { id: 'flowseal-general-alt13', name: 'general (ALT13)', compatible: true, content_hash: 'sha256:alt13', source_version: '1.10.3' };
 page.profiles.push(next);
 page.renderResults();

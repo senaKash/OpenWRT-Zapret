@@ -234,7 +234,7 @@ END {
 	# Canonical input must match service::owz_profile_hash exactly.
 	print "id=" profile_id > canon_file
 	print "name=" profile_name >> canon_file
-	print "source=flowseal" >> canon_file
+	print "source=" (profile_source!=""?profile_source:"flowseal") >> canon_file
 	print "source_version=" source_version >> canon_file
 	print "compatible=" compatible >> canon_file
 	print "tcp_ports=" tcp >> canon_file
@@ -248,7 +248,7 @@ END {
 	print "{" > out_file
 	print "  \"id\": \"" jesc(profile_id) "\"," >> out_file
 	print "  \"name\": \"" jesc(profile_name) "\"," >> out_file
-	print "  \"source\": \"flowseal\"," >> out_file
+	print "  \"source\": \"" jesc(profile_source!=""?profile_source:"flowseal") "\"," >> out_file
 	print "  \"source_version\": \"" jesc(source_version) "\"," >> out_file
 	print "  \"compatible\": " compatible "," >> out_file
 	print "  \"tcp_ports\": \"" jesc(tcp) "\"," >> out_file
