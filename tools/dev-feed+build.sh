@@ -4,7 +4,7 @@ set -euo pipefail
 BUILDROOT="$HOME/build/openwrt-xiaomi-ax3000t-rd03v2/openwrt"
 FEED_DIR="$BUILDROOT/feeds/openwrtzapret"
 REPO_URL="https://github.com/senaKash/OpenWRT-Zapret.git"
-BRANCH="dev-flowseal-ui"
+BRANCH="dev-luci-ui"
 PACKAGE="luci-app-zapret2"
 
 GREEN='\033[1;32m'
