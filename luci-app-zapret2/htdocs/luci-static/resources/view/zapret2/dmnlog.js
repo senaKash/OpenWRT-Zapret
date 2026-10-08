@@ -137,7 +137,7 @@ return view.extend({
             return;
         }
         var h2 = E('div', {'class' : 'cbi-title-section'}, [
-            E('h2', {'class': 'cbi-title-field'}, [ ]),
+            E('h2', {'class': 'cbi-title-field'}, _('Log Viewer')),
         ]);
 
         var tabs = E('div', {}, E('div'));
@@ -205,7 +205,7 @@ return view.extend({
         this.POLL.init( this.pollLog.bind(this), 1000 );  // interval 1000 ms
         this.POLL.start();
 
-        return E('div', { }, [ h2, tabs ]);
+        return E('div', { 'class': 'owz-theme owz-log-page' }, [ E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }), h2, tabs ]);
     },
 
     handleSaveApply: null,

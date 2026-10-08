@@ -82,7 +82,8 @@ return view.extend({
             'class': 'btn cbi-button-apply',
             'click': L.bind(this.addStrategy, this)
         }, _('Add'));
-        return E('div', [
+        return E('div', { 'class': 'owz-theme owz-import-page' }, [
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }),
             E('h2', _('Import Strategy')),
             E('p', { 'class': 'cbi-value-description' }, _('Choose a zapret-discord-youtube general*.bat file or paste its contents. Update Strategies must install the strategy assets first. BAT text is converted as data and never executed.')),
             E('div', { 'class': 'cbi-section' }, [

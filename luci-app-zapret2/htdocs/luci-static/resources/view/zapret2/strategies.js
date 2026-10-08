@@ -641,7 +641,8 @@ return view.extend({
         this.flowsealUpdateButton = E('button', { 'class': 'btn cbi-button-apply', 'click': L.bind(this.startFlowsealSync, this) }, _('Update Strategies'));
         this.resultsBody = E('tbody');
 
-        let page = E('div', [
+        let page = E('div', { 'class': 'owz-theme owz-strategies-page' }, [
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }),
             E('div', { 'class': 'owz-top-layout' }, [
             E('div', { 'class': 'owz-top-column' }, [
             E('div', { 'class': 'cbi-section owz-control-section' }, [

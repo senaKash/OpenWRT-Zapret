@@ -260,7 +260,8 @@ return view.extend({
         this.rows = E('tbody');
         this.renderRows();
 
-        return E('div', [
+        return E('div', { 'class': 'owz-theme owz-lists-page' }, [
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }),
             E('div', { 'class': 'cbi-section' }, [
                 E('div', { 'class': 'owz-section-heading owz-lists-heading' }, [
                     E('h2', _('Lists')),

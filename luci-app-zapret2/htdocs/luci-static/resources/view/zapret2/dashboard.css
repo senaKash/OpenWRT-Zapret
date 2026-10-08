@@ -14,6 +14,12 @@
 .owz-dashboard .owz-ascii-title {
     display: block;
     box-sizing: border-box;
+    /* Strip LuCI's default <pre> card styling. */
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    outline: 0;
     white-space: pre;
     overflow-x: auto;
     max-width: 100%;
@@ -40,6 +46,9 @@
 }
 .owz-dashboard .owz-eye-panel {
     position: relative;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
     min-width: 0;
     min-height: 315px;
     display: flex;
@@ -56,6 +65,13 @@
 }
 .owz-dashboard .owz-eye-art {
     position: relative;
+    /* Same reset for the eye's <pre>. */
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    outline: 0;
+    padding: 0 !important;
     color: #ddd;
     line-height: 1.04;
     white-space: pre;
@@ -71,16 +87,6 @@
 .owz-dashboard .owz-eye-art .w { color: #e0dce8; }
 .owz-dashboard .owz-eye-art .d { color: #696274; }
 .owz-dashboard .owz-eye-art .m { color: #85619e; }
-.owz-dashboard .owz-eye-note {
-    font: 11px 'Courier New', monospace;
-    letter-spacing: .08em;
-    color: #8d75a6;
-    text-align: center;
-    position: absolute;
-    bottom: 6px;
-    left: 0;
-    right: 0;
-}
 @media (max-width: 900px) {
     .owz-dashboard .owz-dashboard-layout { grid-template-columns: 1fr; }
     .owz-dashboard .owz-eye-panel { min-height: 300px; }

@@ -396,7 +396,8 @@ return view.extend({
         let url1 = 'https://github.com/bol-van/'+tools.appName;
         let url2 = 'https://github.com/remittor/zapret-openwrt';
 
-        return E([
+        return E('div', { 'class': 'owz-theme owz-service-page' }, [
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }),
             E('h2', { 'class': 'fade-in' }, page_title),
             aux1,
             aux2,

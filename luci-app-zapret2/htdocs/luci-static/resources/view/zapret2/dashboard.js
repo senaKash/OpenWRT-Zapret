@@ -239,8 +239,9 @@ return view.extend({
             restart: E('button', { 'class': 'btn cbi-button-action', 'click': L.bind(this.act, this, 'restart') }, _('Restart'))
         };
         const eyeArt = E('pre', { 'class': 'owz-eye-art', 'aria-hidden': 'true' });
-        let page = E('div', { 'class': 'owz-dashboard' }, [
-            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/dashboard.css') }),
+        let page = E('div', { 'class': 'owz-dashboard owz-theme' }, [
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/dashboard.css') + '?v=2' }),
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }),
             E('h2', { 'class': 'owz-screenreader' }, _('OpenWRTZapret')),
             E('pre', { 'class': 'owz-ascii-title', 'aria-hidden': 'true' }, ASCII_TITLE),
             E('div', { 'class': 'owz-dashboard-layout' }, [
@@ -263,8 +264,7 @@ return view.extend({
                     'class': 'owz-eye-panel',
                     'aria-label': _('Decorative ASCII eye following the cursor')
                 }, [
-                    eyeArt,
-                    E('div', { 'class': 'owz-eye-note', 'aria-hidden': 'true' }, '[ FREE LOOK // ASCII ONLY ]')
+                    eyeArt
                 ])
             ])
         ]);

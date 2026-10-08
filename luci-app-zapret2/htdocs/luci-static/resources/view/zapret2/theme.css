@@ -1,0 +1,137 @@
+/* OpenWRTZapret terminal-style UI layer.
+ * Scope all selectors to .owz-theme so ordinary LuCI pages are unaffected.
+ * Visual-only: no service calls, no animations, no external assets.
+ */
+.owz-theme {
+    --owz-violet: #ba70ff;
+    --owz-violet-light: #d7aeff;
+    --owz-violet-muted: #b49fc8;
+    --owz-line: rgba(176, 112, 245, .32);
+    --owz-surface: #1c1921;
+    min-width: 0;
+}
+
+/* Small terminal styling for titles, rather than huge FIGlet text everywhere. */
+.owz-theme:not(.owz-dashboard) h2 {
+    color: var(--owz-violet-light);
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-weight: 600;
+    font-size: clamp(1.04rem, 1.35vw, 1.23rem);
+    letter-spacing: .012em;
+    line-height: 1.4;
+    border-bottom: 1px solid var(--owz-line);
+    padding-bottom: .4rem;
+}
+.owz-theme:not(.owz-dashboard) h2::before {
+    content: "> ";
+    color: var(--owz-violet);
+}
+.owz-theme h3 {
+    color: var(--owz-violet-light);
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+.owz-theme .cbi-value-title,
+.owz-theme .owz-status-line,
+.owz-theme .owz-job-line,
+.owz-theme .cbi-title-field,
+.owz-theme .owz-list-name,
+.owz-theme .owz-ascii-progress {
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+.owz-theme .cbi-value-title { color: #bfb0cf; }
+.owz-theme .cbi-value-description { line-height: 1.55; }
+.owz-theme a:not(.btn) { color: var(--owz-violet-light); }
+.owz-theme a:not(.btn):hover { color: #e5ceff; }
+
+/* Respect destructive red buttons and all disabled controls. */
+.owz-theme .btn:not(.cbi-button-negative):not(.cbi-button-reset):not(.cbi-button-success):not(.cbi-button-save),
+.owz-theme .cbi-button:not(.cbi-button-negative):not(.cbi-button-reset):not(.cbi-button-success):not(.cbi-button-save) {
+    border-color: #8552bb;
+    color: #d5a7ff;
+    background: rgba(130, 63, 195, .075);
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+.owz-theme .btn:not(.cbi-button-negative):not(.cbi-button-reset):not(.cbi-button-success):not(.cbi-button-save):hover:not(:disabled),
+.owz-theme .cbi-button:not(.cbi-button-negative):not(.cbi-button-reset):not(.cbi-button-success):not(.cbi-button-save):hover:not(:disabled) {
+    background: rgba(149, 82, 207, .17);
+    border-color: #bb83f1;
+}
+.owz-theme button:disabled,
+.owz-theme .btn:disabled { opacity: .52; cursor: not-allowed; }
+.owz-theme :is(button, a, select, input, textarea):focus-visible {
+    outline: 2px solid var(--owz-violet);
+    outline-offset: 2px;
+}
+
+/* Compact tables: terminal-looking headings without sacrificing scanability. */
+.owz-theme .owz-results-wrap { border-color: var(--owz-line); }
+.owz-theme .owz-results-table thead th {
+    color: var(--owz-violet-light);
+    background: rgba(108, 55, 160, .11);
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: .88rem;
+}
+.owz-theme .owz-results-table tbody tr:hover {
+    background: rgba(168, 100, 237, .055);
+}
+.owz-theme .owz-top-column > .cbi-section { border-color: var(--owz-line); }
+.owz-theme .owz-job-panel {
+    border-color: #5e4477;
+    background: var(--owz-surface);
+    color: #e0d3e9;
+}
+.owz-theme .owz-job-prompt { color: var(--owz-violet); }
+.owz-theme .owz-job-label { color: var(--owz-violet-muted); }
+.owz-theme .owz-ascii-progress { color: var(--owz-violet); }
+.owz-theme .owz-help-icon { color: var(--owz-violet-light); }
+
+/* The Lists table stays a table; filenames use a readable mono font. */
+.owz-lists-page .owz-list-name { color: #d8c8ec; font-size: .92rem; }
+.owz-lists-page .owz-list-editor,
+.owz-import-page textarea,
+.owz-log-page textarea[readonly] {
+    background: #16141a;
+    color: #e2d6e9;
+    border: 1px solid #674781;
+    border-radius: 3px;
+    font: .88rem/1.55 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    tab-size: 4;
+}
+.owz-import-page textarea { min-height: 18rem; }
+.owz-import-page input[type="file"],
+.owz-theme select { accent-color: var(--owz-violet); }
+.owz-theme select { border-color: #79569c; }
+.owz-import-page .owz-import-lists-note { border-color: var(--owz-line); }
+
+/* Log viewer: retain its existing scrolling and update behavior. */
+.owz-log-page textarea[readonly] {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    white-space: pre;
+    resize: vertical;
+}
+.owz-log-page .cbi-title-section { margin-bottom: .8rem; }
+.owz-log-page [data-tab-title] { min-width: 0; }
+
+/* Legacy Diagnostics & Tools still has its existing service-status colors. */
+.owz-service-page .cbi-section { min-width: 0; }
+.owz-service-page .cbi-value-field { min-width: 0; overflow-wrap: anywhere; }
+
+/* Dashboard ASCII title and eye have no panels or captions. */
+.owz-dashboard .owz-ascii-title,
+.owz-dashboard .owz-eye-art {
+    background: transparent !important;
+    box-shadow: none !important;
+    border: 0 !important;
+    padding: 0 !important;
+}
+
+@media (max-width: 720px) {
+    .owz-theme:not(.owz-dashboard) h2 { font-size: 1.02rem; }
+    .owz-theme .owz-results-wrap { overflow-x: auto; }
+    .owz-theme .btn { max-width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .owz-theme * { scroll-behavior: auto !important; }
+}
