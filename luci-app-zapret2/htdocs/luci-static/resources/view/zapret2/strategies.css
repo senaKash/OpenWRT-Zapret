@@ -9,7 +9,8 @@
 .owz-actions { margin: .5rem 0 1rem; }
 .owz-job-progress { margin-top: .4rem; }
 .owz-job-progress[hidden] { display: none; }
-.owz-job-progress progress { width: 18rem; max-width: 100%; }
+.owz-job-progress .btn[hidden] { display: none; }
+.owz-ascii-progress { white-space: pre; color: #7bc987; }
 
 .owz-badge {
     display: inline-block;
@@ -27,6 +28,73 @@
 .owz-badge-testing { color: #2869a3; background: rgba(40, 105, 163, .08); }
 .owz-badge-neutral { color: #555; background: rgba(85, 85, 85, .06); }
 
+.owz-top-layout {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2rem;
+    align-items: start;
+    margin-bottom: .75rem;
+}
+
+.owz-top-column { min-width: 0; }
+.owz-top-column > .cbi-section {
+    min-width: 0;
+    margin: 0;
+    padding: .75rem 1rem;
+    border: 1px solid rgba(127, 127, 127, .28);
+    border-radius: 4px;
+}
+.owz-top-column h2 { margin: 0 0 .75rem; }
+.owz-top-column .cbi-value { margin-bottom: .35rem; }
+.owz-top-column .owz-actions { margin: .65rem 0 0; }
+.owz-updates-header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; }
+.owz-header-actions, .owz-title-help { display: flex; align-items: center; gap: .5rem; }
+.owz-header-actions { margin-left: auto; }
+.owz-updates-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 1rem; }
+.owz-import-action { text-align: right; }
+.owz-import-button { white-space: nowrap; }
+.owz-help-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.15rem;
+    height: 1.15rem;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    color: #2995c7;
+    font-size: .75rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: help;
+}
+.owz-help-icon:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.owz-strategy-note, .owz-source-note { margin: .6rem 0; }
+
+.owz-job-panel {
+    padding: .7rem .85rem;
+    border: 1px solid #48574e;
+    border-radius: 4px;
+    background: #1c2224;
+    color: #d6e5d8;
+    font: .9rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.owz-job-line { display: flex; flex-wrap: wrap; gap: .45rem; }
+.owz-job-prompt { color: #7bc987; }
+.owz-job-label { color: #aebeb1; }
+.owz-job-panel .owz-job-progress { gap: .5rem .8rem; }
+.owz-loading-cell { padding: .75rem; opacity: .7; }
+.owz-tests-section { margin-top: .5rem; }
+.owz-tests-section .owz-section-heading { margin-bottom: .5rem; }
+.owz-tests-section .owz-section-heading h2 { margin: 0; }
+
+@media (max-width: 800px) {
+    .owz-top-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 480px) {
+    .owz-updates-body { grid-template-columns: minmax(0, 1fr); }
+}
+
 
 /* Test results: keep the native LuCI look, but make the data read as a table. */
 .owz-results-wrap {
@@ -37,6 +105,7 @@
 }
 
 .owz-results-table {
+    display: table;
     width: 100%;
     min-width: 940px;
     margin: 0;
@@ -45,11 +114,18 @@
     border-spacing: 0;
 }
 
-.owz-results-table .owz-col-strategy { width: 27%; }
-.owz-results-table .owz-col-result   { width: 18%; }
+.owz-results-table > thead { display: table-header-group; }
+.owz-results-table > tbody { display: table-row-group; }
+.owz-results-table tr { display: table-row; }
+.owz-results-table th, .owz-results-table td { display: table-cell; box-sizing: border-box; }
+
+.owz-results-table .owz-col-index    { width: 32px; }
+.owz-results-table .owz-col-lock     { width: 28px; }
+.owz-results-table .owz-col-strategy { width: 24%; }
+.owz-results-table .owz-col-result   { width: 16%; }
 .owz-results-table .owz-col-probe    { width: 8%; }
-.owz-results-table .owz-col-tested   { width: 15%; }
-.owz-results-table .owz-col-action   { width: 8%; }
+.owz-results-table .owz-col-tested   { width: 9rem; }
+.owz-results-table .owz-col-action   { width: 3rem; }
 
 .owz-results-table thead th {
     padding: .6rem .65rem;
@@ -87,8 +163,15 @@
     background: rgba(127, 127, 127, .055);
 }
 
-.owz-results-table .owz-current-row > td,
-.owz-results-table .owz-current-row:hover > td {
+.owz-results-table tbody tr.owz-active-strategy > td,
+.owz-results-table tbody tr.owz-active-strategy:hover > td {
+    background: rgba(39, 133, 62, .14);
+}
+
+.owz-results-table tbody tr.owz-active-strategy > td:first-child { box-shadow: inset 3px 0 #27853e; }
+
+.owz-results-table tbody tr.owz-current-row > td,
+.owz-results-table tbody tr.owz-current-row:hover > td {
     background: rgba(40, 105, 163, .10);
 }
 
@@ -99,11 +182,22 @@
     white-space: nowrap;
 }
 
+.owz-lock-cell,
 .owz-probe-cell,
 .owz-action-cell {
     text-align: center;
     white-space: nowrap;
 }
+
+.owz-results-table th.owz-index-cell,
+.owz-results-table td.owz-index-cell,
+.owz-results-table th.owz-lock-cell,
+.owz-results-table td.owz-lock-cell {
+    padding-left: .1rem;
+    padding-right: .1rem;
+}
+
+.owz-results-table th.owz-lock-cell { font-size: .72em; }
 
 .owz-result-cell {
     overflow: hidden;
@@ -128,4 +222,115 @@
 
 .owz-results-table .owz-action-cell .btn {
     margin: 0;
+}
+
+
+.owz-section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+    width: 100%;
+}
+
+.owz-section-heading > .btn { margin-left: auto; }
+
+.owz-index-cell {
+    text-align: center !important;
+    white-space: nowrap;
+    opacity: .72;
+}
+
+.owz-icon-button {
+    box-sizing: border-box;
+    width: 26px;
+    min-width: 26px;
+    height: 26px;
+    margin: 0 !important;
+    padding: 0;
+    line-height: 1;
+    vertical-align: middle;
+}
+
+.owz-lock-button {
+    width: 22px;
+    min-width: 22px;
+    height: 22px;
+    font-size: 13px;
+    border-color: transparent;
+    background: transparent;
+}
+
+.owz-delete-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: #b43a32;
+    border: 1px solid rgba(127, 127, 127, .5);
+    background: rgba(127, 127, 127, .08);
+}
+
+.owz-delete-button:hover:not(:disabled) { background: rgba(127, 127, 127, .16); }
+.owz-delete-button:disabled { opacity: .45; }
+
+.owz-lists-heading { margin-bottom: .75rem; }
+.owz-lists-heading h2 { margin: 0; }
+.owz-lists-heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-left: auto; }
+.owz-lists-apply-status { margin: .25rem 0 .65rem; }
+.owz-lists-apply-pending { color: #987000; }
+.owz-lists-apply-success { color: #27853e; }
+.owz-lists-apply-error { color: #b43a32; }
+.owz-lists-apply-loading { opacity: .75; }
+.owz-lists-table { min-width: 560px; }
+.owz-lists-table col:first-child { width: 52%; }
+.owz-lists-table col:nth-child(2) { width: 18%; }
+.owz-lists-table col:last-child { width: 30%; }
+.owz-lists-table th:last-child,
+.owz-lists-table td:last-child { text-align: center; }
+.owz-list-name { font-weight: 500; }
+.owz-list-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .45rem;
+}
+.owz-list-edit-button,
+.owz-list-reset-button { min-width: 4.8rem; }
+.owz-list-editor {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    min-height: 21rem;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: .9rem;
+    line-height: 1.45;
+    white-space: pre;
+}
+.owz-list-editor-note { margin: 0 0 .65rem; }
+.owz-list-editor-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: .5rem;
+    margin-top: .75rem;
+}
+
+.owz-import-lists-note {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: .75rem;
+    padding: .75rem 1rem;
+    border: 1px solid rgba(127, 127, 127, .28);
+    border-radius: 4px;
+}
+.owz-import-lists-note .cbi-value-description { margin-top: .2rem; }
+.owz-import-lists-note .btn { white-space: nowrap; }
+@media (max-width: 600px) {
+    .owz-import-lists-note { align-items: flex-start; flex-direction: column; }
+    .owz-lists-heading { align-items: flex-start; }
+    .owz-lists-heading-actions { width: 100%; margin-left: 0; }
 }

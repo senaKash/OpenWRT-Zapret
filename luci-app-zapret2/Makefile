@@ -6,12 +6,12 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-zapret2
 PKG_VERSION:=0.9.20260307
-PKG_RELEASE:=18
+PKG_RELEASE:=31
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=OpenWRTZapret contributors
 
 LUCI_TITLE:=OpenWRTZapret LuCI interface for Zapret2
-LUCI_DEPENDS:=+zapret2 +rpcd-mod-ucode +jsonfilter +coreutils-sha256sum +curl
+LUCI_DEPENDS:=+zapret2 +rpcd-mod-ucode +ucode +jsonfilter +coreutils-sha256sum +curl
 LUCI_PKGARCH:=all
 
 define Package/$(PKG_NAME)/postinst

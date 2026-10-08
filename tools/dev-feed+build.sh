@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
+
+# ОДИН РАЗ: УСТАНОВКА И СОХРАНЕНИЕ ПАРОЛЯ
+#sudo apt install -y sshpass
+#mkdir -p ~/.config/openwrtzapret
+#read -rsp "Пароль роутера: " PW; echo; (umask 077; printf '%s\n' "$PW" > ~/.config/openwrtzapret/router-password); unset PW
+
+
 set -euo pipefail
 
 BUILDROOT="$HOME/build/openwrt-xiaomi-ax3000t-rd03v2/openwrt"
 FEED_DIR="$BUILDROOT/feeds/openwrtzapret"
 REPO_URL="https://github.com/senaKash/OpenWRT-Zapret.git"
-BRANCH="dev-flowseal-ui"
+BRANCH="dev-luci-ui"
 PACKAGE="luci-app-zapret2"
 
 GREEN='\033[1;32m'
@@ -84,20 +91,41 @@ printf '\a'
 
 
 step "Отправляю APK на роутер"
+step "Устанавливаю APK на роутер"
 
 ROUTER="root@192.168.1.1"
+PASSWORD_FILE="$HOME/.config/openwrtzapret/router-password"
 REMOTE_APK="/tmp/$(basename "$APK")"
 
-printf "${YELLOW}Роутер:${RESET} %s\n" "$ROUTER"
-printf "${YELLOW}Файл:${RESET} %s\n" "$REMOTE_APK"
-printf "Введите пароль root роутера:\n\n"
+[ -f "$PASSWORD_FILE" ] || die "Не найден файл с паролем: $PASSWORD_FILE"
+command -v sshpass >/dev/null || die "Установи sshpass в WSL"
 
-scp -O "$APK" "$ROUTER:$REMOTE_APK"
+# Отправляем APK
+sshpass -f "$PASSWORD_FILE" scp -O \
+    -o StrictHostKeyChecking=accept-new \
+    "$APK" "$ROUTER:$REMOTE_APK" || die "Не удалось отправить APK"
 
-printf "\n${GREEN}=============================================${RESET}\n"
-printf "${GREEN} APK ОТПРАВЛЕН НА РОУТЕР${RESET}\n"
-printf "${GREEN}=============================================${RESET}\n"
-printf "%s\n" "$REMOTE_APK"
-printf "\nДля установки на роутере:\n"
-printf "${CYAN}apk add --allow-untrusted '%s'${RESET}\n" "$REMOTE_APK"
-printf "${GREEN}=============================================${RESET}\n"
+# Устанавливаем и удаляем старые APK
+sshpass -f "$PASSWORD_FILE" ssh \
+    -o StrictHostKeyChecking=accept-new \
+    "$ROUTER" sh -s -- "$REMOTE_APK" <<'EOF'
+set -e
+
+APK="$1"
+
+echo "==> Устанавливаю $APK"
+apk add --allow-untrusted "$APK"
+
+echo "==> Проверяю установку"
+apk info -v luci-app-zapret2
+
+echo "==> Удаляю старые APK"
+for file in /tmp/luci-app-zapret2-*.apk; do
+    [ -f "$file" ] || continue
+    [ "$file" = "$APK" ] || rm -f "$file"
+done
+
+echo "==> Установка завершена"
+EOF
+
+printf "\n${GREEN}APK УСТАНОВЛЕН НА РОУТЕР${RESET}\n"
