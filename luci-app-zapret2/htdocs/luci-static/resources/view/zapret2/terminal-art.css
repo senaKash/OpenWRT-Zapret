@@ -1,0 +1,201 @@
+/* OpenWRTZapret symbolic UI v2 — distinct motifs across the full usable LuCI page. */
+/* All selectors are scoped. Native LuCI controls, polls and backend remain unchanged. */
+.owz-theme:not(.owz-dashboard) {
+    --owz-sym:#ba70ff; --owz-sym-dim:#805a9c; --owz-paper:#dedbe3;
+    --owz-sym-line:#5e4770;
+    box-sizing:border-box; width:100%; max-width:none; min-width:0;
+    min-height:calc(100vh - 175px); padding:0 0 2.5rem;
+    font-family:Consolas,"DejaVu Sans Mono","Liberation Mono",monospace;
+}
+.owz-theme:not(.owz-dashboard), .owz-theme:not(.owz-dashboard) * {box-sizing:border-box;}
+.owz-theme:not(.owz-dashboard) :is(.cbi-section,.cbi-section-node) {
+    background:transparent!important;box-shadow:none!important;border-radius:0!important;
+}
+.owz-theme:not(.owz-dashboard) h2 {
+    margin:0 0 .65rem!important;padding:.35rem 0 .5rem!important;
+    background:transparent!important;border:0!important;
+    font:700 17px/1.45 Consolas,"DejaVu Sans Mono",monospace!important;
+    color:var(--owz-paper)!important;
+}
+.owz-theme:not(.owz-dashboard) h2::before {content:""!important;}
+.owz-theme:not(.owz-dashboard) h3 {
+    font:700 14px/1.4 Consolas,"DejaVu Sans Mono",monospace!important;
+    color:#caa0f3; margin:.2rem 0 1rem;
+}
+.owz-theme:not(.owz-dashboard) pre.owz-art {
+    background:transparent!important;border:0!important;border-radius:0!important;
+    box-shadow:none!important;padding:0!important;margin:0!important;
+    font:12px/1.22 Consolas,"DejaVu Sans Mono","Liberation Mono",monospace;
+    white-space:pre;overflow-x:auto;max-width:100%;color:var(--owz-sym-dim);text-shadow:none;
+}
+.owz-theme:not(.owz-dashboard) :is(button,.btn,.cbi-button) {
+    border-radius:0!important; font-family:Consolas,"Liberation Mono",monospace!important;
+    background:transparent!important;box-shadow:none!important;
+}
+.owz-theme:not(.owz-dashboard) :is(button,.btn,.cbi-button):hover:not(:disabled) {background:rgba(132,85,167,.1)!important;}
+.owz-theme:not(.owz-dashboard) :is(button,input,textarea,select):focus-visible {outline:2px solid #bb82f0;outline-offset:2px;}
+.owz-theme:not(.owz-dashboard) :is(textarea,input:not([type=checkbox]):not([type=radio]),select) {border-radius:0!important;}
+.owz-theme:not(.owz-dashboard) :is(.cbi-value-field,.cbi-value-title) {min-width:0;overflow-wrap:anywhere;}
+.owz-theme:not(.owz-dashboard) a:not(.btn) {color:#c49de7;}
+.owz-theme:not(.owz-dashboard) .owz-results-table th {color:#ceb4e7;}
+
+/* DIAGNOSTICS — skewed steel bays occupy full page width; CRT occupies right side. */
+.owz-service-page .owz-service-titleline {
+    display:flex;gap:1.5rem;align-items:baseline;flex-wrap:wrap;
+    border-bottom:2px solid #79528e; margin:0 0 1rem;padding:0 0 .4rem;
+}
+.owz-service-page .owz-service-titleline h2 {margin:0!important;}
+.owz-service-page .owz-tty-version {color:#9e94a5;font:12px/1.5 Consolas,monospace;}
+.owz-service-page .owz-service-machine {
+    display:grid;grid-template-columns:minmax(0,1.7fr) minmax(225px,.9fr);gap:2.5rem;
+    width:100%;align-items:stretch;margin:1.25rem 0 1.4rem;
+}
+.owz-service-page .owz-service-status-bay {
+    min-width:0;border-left:2px solid #6b4e80;border-bottom:2px solid #4e3b5f;
+    padding:0 1.2rem 1.25rem;position:relative;
+}
+.owz-service-page .owz-metal-ridge,.owz-service-page .owz-metal-floor {
+    color:#aa7cd7;font:12px/1.3 Consolas,monospace;white-space:pre;
+    overflow:hidden;max-width:100%;
+}
+.owz-service-page .owz-service-status-bay h3::before {content:"/$  ";color:#ba70ff;}
+.owz-service-page .owz-art-status .cbi-section-node {padding:0!important;}
+.owz-service-page .owz-art-status .cbi-value {padding:.3rem 0;border-bottom:1px dotted #574361;}
+.owz-service-page .owz-art-status .cbi-value-title {color:#b5a8c1;}
+.owz-service-page .owz-art-status .cbi-value-title::before {content:"| ";color:#7b5b91;}
+.owz-service-page .owz-service-monitor-bay {display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2.2rem;min-width:0;}
+.owz-service-page pre.owz-service-crt {color:#b083d9;font-size:clamp(10px,1vw,13px);}
+.owz-service-page pre.owz-circuit {color:#83619c;font-size:clamp(9px,.9vw,12px);}
+.owz-service-page .owz-service-bottom {display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:2.5rem;min-height:185px;margin-top:1rem;}
+.owz-service-page .owz-service-actions-bay {border-top:2px solid #724f88;border-right:1px solid #43364f;padding:1rem 1.4rem 1rem .4rem;min-width:0;}
+.owz-service-page .owz-service-actions-bay h3::before {content:" /$ ";color:var(--owz-sym);}
+.owz-service-page .owz-art-actions .cbi-section-node {padding:0!important;}
+.owz-service-page .owz-art-actions .cbi-value {margin:.8rem 0!important;border:0!important;}
+.owz-service-page .owz-art-actions .cbi-value-title {min-width:185px;}
+.owz-service-page .owz-art-actions button {border:1px solid #9166b5!important;box-shadow:3px 3px 0 #503a5f!important;margin:0 5px 5px 0;}
+.owz-service-page pre.owz-service-footline {margin:1.5rem 0 0!important;color:#654d78;font-size:11px;}
+.owz-service-page .owz-service-sources-bay {padding:1rem 0;border-top:2px dotted #61516d;min-width:0;}
+.owz-service-page .owz-service-sources-bay h3::before {content:" / ";color:var(--owz-sym);}
+.owz-service-page .owz-art-sources {overflow-wrap:anywhere;font:12px/1.85 Consolas,monospace;}
+.owz-service-page .owz-art-sources div {border-bottom:1px dashed #39303e;padding:.35rem 0;}
+
+/* STRATEGIES — branching tracks touch live selectors, status indicators, buttons and results. */
+.owz-strategies-page .owz-top-layout {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2rem;align-items:stretch;width:100%;margin-bottom:2.25rem;}
+.owz-strategies-page .owz-top-column {position:relative;border-left:2px solid #745091;padding-left:1.1rem;min-width:0;}
+.owz-strategies-page .owz-top-column::before {content:"o──────┬────────────────";display:block;color:#a978ce;font:12px/1 Consolas,monospace;white-space:nowrap;overflow:hidden;margin:0 0 .45rem;}
+.owz-strategies-page .owz-top-column > .cbi-section,.owz-strategies-page .owz-job-panel {padding:.5rem .5rem 1rem!important;border:0!important;background:transparent!important;}
+.owz-strategies-page .owz-top-column > .cbi-section h2::before {content:"├── "!important;color:var(--owz-sym)!important;}
+.owz-strategies-page pre.owz-strategies-branch,.owz-strategies-page pre.owz-strategies-update-wire {color:#7d61a6;font-size:11px;margin:-.2rem 0 .65rem!important;}
+.owz-strategies-page .owz-status-line {border-bottom:1px dashed #584268;padding-bottom:.7rem;}
+.owz-strategies-page .owz-status-line > span::before {content:"o ";color:var(--owz-sym);}
+.owz-strategies-page .owz-control-section .cbi-value::before {content:"├─";color:var(--owz-sym);margin-right:.4rem;}
+.owz-strategies-page .owz-actions {position:relative;display:flex;flex-wrap:wrap;gap:1rem;margin:.8rem 0 1rem;}
+.owz-strategies-page .owz-actions::before {content:"└──";color:#9b73c1;align-self:center;}
+.owz-strategies-page .owz-actions .btn,.owz-strategies-page .owz-header-actions .btn,.owz-strategies-page .owz-section-heading>.btn {
+    border:1px solid #9a68c8!important;box-shadow:3px 3px 0 #4b355e!important;position:relative;margin:0 3px 4px 0;
+}
+.owz-strategies-page .owz-job-panel {border-left:2px dotted #8862a9!important;margin:0 0 0 1.4rem;}
+.owz-strategies-page .owz-job-prompt {color:var(--owz-sym);}
+.owz-strategies-page .owz-tests-section {border-top:2px solid #7e5a99!important;padding:.75rem 0 1rem!important;width:100%;}
+.owz-strategies-page .owz-tests-section h2::before {content:"o──── "!important;color:#b488dd;}
+.owz-strategies-page .owz-results-wrap {border:0!important;border-left:2px solid #715086!important;border-radius:0!important;overflow-x:auto;width:100%;}
+.owz-strategies-page .owz-results-table {width:100%;min-width:940px;}
+.owz-strategies-page .owz-results-table thead th {border-bottom:2px solid #5b4470!important;background:transparent!important;}
+.owz-strategies-page .owz-results-table tbody tr {border-left:2px solid #65497c;}
+.owz-strategies-page .owz-results-table tbody td {border-bottom:1px dotted #413449!important;}
+.owz-strategies-page .owz-results-table td.owz-strategy-cell::before {content:"├── ";color:#a27bc9;white-space:pre;}
+.owz-strategies-page .owz-results-table tbody tr:last-child td.owz-strategy-cell::before {content:"└── ";}
+.owz-strategies-page .owz-badge {border-radius:0!important;}
+
+/* IMPORT — single workspace: floppy is the left rail, the real file picker, editor and action flow on right. */
+.owz-import-page .owz-import-full-grid {display:grid;grid-template-columns:minmax(150px,245px) minmax(0,1fr);gap:clamp(1rem,3vw,3rem);width:100%;min-height:calc(100vh - 235px);}
+.owz-import-page .owz-import-art-rail {border-right:1px dashed #654e7c;padding:3rem 1rem 2rem 0;display:flex;align-items:center;flex-direction:column;gap:2.5rem;}
+.owz-import-page pre.owz-import-diskette {color:#ac79de;font-size:12px;}
+.owz-import-page pre.owz-import-route {color:#8565a3;font-size:13px;}
+.owz-import-page .owz-import-editor-area {display:flex;flex-direction:column;gap:.8rem;min-width:0;}
+.owz-import-page .owz-import-editor-area h2 {margin-top:.3rem!important;border-bottom:2px dashed #72518a!important;}
+.owz-import-page .cbi-section {border:0!important;padding:0!important;margin:0!important;}
+.owz-import-page .cbi-value {border-bottom:1px dotted #483850;padding:.75rem 0;margin:0!important;}
+.owz-import-page .cbi-value-title::before {content:"[+] ";color:var(--owz-sym);}
+.owz-import-page .cbi-value-field {flex:1;min-width:0;}
+.owz-import-page textarea {width:100%!important;max-width:none!important;min-height:clamp(320px,45vh,650px)!important;background:#131115!important;border:1px solid #775b90!important;border-left:3px solid #9474b1!important;}
+.owz-import-page .cbi-page-actions {border-top:2px solid #815f98!important;padding:1.1rem 0 .7rem!important;}
+.owz-import-page .cbi-page-actions::before {content:"==> ";color:var(--owz-sym);}
+.owz-import-page .cbi-page-actions .btn {border:1px solid #a573d4!important;box-shadow:3px 3px 0 #493352!important;}
+.owz-import-page .owz-import-lists-note {border-left:3px solid #694c83!important;padding:.9rem 1.2rem!important;margin:0!important;max-width:none;}
+.owz-import-page .owz-import-lists-note::before {content:"|__ ";display:inline;color:#bd8cf0;}
+
+/* LISTS — DOS rail and real table/editor occupy entire available width. No fake filenames. */
+.owz-lists-page .owz-lists-full-layout {display:grid;grid-template-columns:200px minmax(0,1fr);gap:1.3rem;min-height:calc(100vh - 220px);}
+.owz-lists-page .owz-lists-dos-rail {border-right:2px double #6f5286;padding:1.5rem 1rem 1rem 0;overflow:hidden;}
+.owz-lists-page pre.owz-lists-tree {color:#b28bd7;font:12px/1.42 Consolas,"DejaVu Sans Mono",monospace;}
+.owz-lists-page .owz-lists-rail-tail {white-space:pre;font:12px/1.55 Consolas,monospace;color:#7c579c;margin-top:2rem;}
+.owz-lists-page .owz-lists-index-area {min-width:0;padding:.5rem 0 1rem;}
+.owz-lists-page .cbi-section {padding:.35rem 0!important;border:0!important;}
+.owz-lists-page .owz-lists-heading {border-bottom:2px double #825fa2;margin:0 0 1rem;}
+.owz-lists-page .owz-lists-heading h2::before {content:"╔══ "!important;color:#a47fc8;}
+.owz-lists-page .owz-results-wrap {width:100%;border:2px double #7c5e93!important;border-radius:0!important;overflow-x:auto;}
+.owz-lists-page .owz-results-table {min-width:540px;width:100%;}
+.owz-lists-page .owz-results-table thead th {color:#d6c3e9!important;background:#241d2b!important;border-bottom:2px double #72558a!important;}
+.owz-lists-page .owz-results-table tbody td {border-bottom:1px dotted #4f415d!important;}
+.owz-lists-page .owz-results-table tbody td:first-child::before {content:"║ ";color:#b084db;}
+.owz-lists-page .owz-list-name::before {content:"├─ ";color:#a574d4;}
+.owz-lists-page .owz-lists-heading-actions .btn {border:1px solid #8868a2!important;}
+.owz-lists-page .owz-list-editor {border:2px double #967ab5!important;border-radius:0!important;}
+.owz-lists-page .owz-badge {border-radius:0!important;}
+
+/* LOG VIEWER — BBS block geometry belongs to the real tabs and log panes, not a top illustration. */
+.owz-log-page .owz-bbs-full-area {min-height:calc(100vh - 225px);border-left:3px solid #77578e;border-right:3px solid #382c42;display:flex;flex-direction:column;}
+.owz-log-page .owz-bbs-titlebar {border-top:4px solid #a375cb;border-bottom:1px solid #75568a;padding:.6rem .9rem;display:flex;gap:.7rem;align-items:baseline;color:#ba85eb;flex-wrap:wrap;}
+.owz-log-page .owz-bbs-titlebar .cbi-title-section {display:inline-block;margin:0!important;flex:0 0 auto;}
+.owz-log-page .owz-bbs-titlebar h2 {display:inline-block;margin:0!important;padding:0!important;}
+.owz-log-page .owz-bbs-log-body {flex:1;min-height:350px;position:relative;border-top:9px solid #302439;border-bottom:5px solid #624477;padding:.8rem 1rem 1rem;}
+.owz-log-page .owz-bbs-log-body::before {content:"░▒▓▓▒░";position:absolute;right:12px;top:-11px;color:#b184d9;font:14px/1 Consolas,monospace;}
+.owz-log-page .owz-bbs-log-body::after {content:"░▒▓▓▒░";position:absolute;left:12px;bottom:-7px;color:#b184d9;font:14px/1 Consolas,monospace;}
+.owz-log-page .owz-bbs-log-body [data-tab-title] {min-width:0;}
+.owz-log-page .owz-bbs-log-body [id^="content_dmnlog_"] {width:100%;}
+.owz-log-page .owz-bbs-log-body textarea[readonly] {width:100%!important;max-width:100%!important;min-height:clamp(320px,54vh,780px);background:#141119!important;color:#e5dee8!important;border:1px solid #624675!important;border-radius:0!important;resize:vertical;font:13px/1.55 Consolas,"Liberation Mono",monospace!important;white-space:pre;}
+.owz-log-page .owz-bbs-log-body button {border:1px solid #855caa!important;}
+.owz-log-page .owz-bbs-footer {color:#9d72c5;border-top:1px solid #70518b;padding:.7rem 1rem;font:12px Consolas,monospace;white-space:nowrap;overflow:hidden;}
+
+@media(max-width:900px){
+ .owz-service-page .owz-service-machine {grid-template-columns:minmax(0,1fr) minmax(175px,.65fr);gap:.75rem;}
+ .owz-service-page pre.owz-service-crt {font-size:10px;}
+ .owz-service-page pre.owz-circuit {font-size:9px;}
+ .owz-lists-page .owz-lists-full-layout {grid-template-columns:155px minmax(0,1fr);gap:.8rem;}
+ .owz-lists-page pre.owz-lists-tree {font-size:10px;}
+}
+@media(max-width:700px){
+ .owz-theme:not(.owz-dashboard) {min-height:0;}
+ .owz-service-page .owz-service-machine,.owz-service-page .owz-service-bottom {grid-template-columns:1fr;gap:1.4rem;}
+ .owz-service-page .owz-service-monitor-bay {flex-direction:row;flex-wrap:wrap;justify-content:flex-start;}
+ .owz-service-page .owz-service-monitor-bay pre.owz-circuit {display:none;}
+ .owz-service-page .owz-art-actions .cbi-value-title {min-width:0;}
+ .owz-strategies-page .owz-top-layout {grid-template-columns:1fr;gap:1.2rem;}
+ .owz-import-page .owz-import-full-grid {grid-template-columns:1fr;min-height:0;}
+ .owz-import-page .owz-import-art-rail {flex-direction:row;align-items:center;justify-content:flex-start;padding:0 0 .7rem;border-right:0;border-bottom:1px dashed #5c436e;gap:1rem;overflow:hidden;}
+ .owz-import-page pre.owz-import-route {font-size:11px;}
+ .owz-lists-page .owz-lists-full-layout {grid-template-columns:1fr;min-height:0;}
+ .owz-lists-page .owz-lists-dos-rail {border-right:0;border-bottom:2px double #6f5286;padding:.3rem 0;}
+ .owz-lists-page .owz-lists-rail-tail {display:none;}
+ .owz-lists-page pre.owz-lists-tree {font-size:10px;}
+ .owz-log-page .owz-bbs-titlebar {gap:.3rem;}
+ .owz-log-page .owz-bbs-titlebar>span:last-child {display:none;}
+ .owz-log-page .owz-bbs-log-body {padding:.6rem .45rem 1rem;}
+ .owz-log-page .owz-bbs-footer {font-size:10px;}
+}
+@media(prefers-reduced-motion:reduce){.owz-theme:not(.owz-dashboard) * {scroll-behavior:auto!important;}}
+
+/* Final legibility pass: input labels sit ABOVE the text area; no cramped adjacent label. */
+.owz-import-page .owz-import-editor-area .cbi-section .cbi-value {display:block!important;}
+.owz-import-page .owz-import-editor-area .cbi-value-title {
+    display:block!important;width:100%!important;text-align:left!important;max-width:none!important;
+    padding:.25rem 0 .65rem!important;margin:0!important;
+}
+.owz-import-page .owz-import-editor-area .cbi-value-field {display:block!important;width:100%!important;max-width:none!important;}
+.owz-import-page .owz-import-editor-area input[type=file] {max-width:100%;}
+.owz-service-page .owz-service-machine {min-height:clamp(265px,38vh,420px);}
+.owz-service-page .owz-service-bottom {min-height:clamp(190px,27vh,340px);}
+@media(max-width:700px){
+ .owz-service-page .owz-service-machine,.owz-service-page .owz-service-bottom {min-height:0;}
+}

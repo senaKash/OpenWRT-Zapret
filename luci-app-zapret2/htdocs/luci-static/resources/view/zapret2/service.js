@@ -396,22 +396,40 @@ return view.extend({
         let url1 = 'https://github.com/bol-van/'+tools.appName;
         let url2 = 'https://github.com/remittor/zapret-openwrt';
 
-        return E([
-            E('h2', { 'class': 'fade-in' }, page_title),
-            aux1,
-            aux2,
-            E('div', { 'class': 'cbi-section-descr fade-in' },
-                E('a', { 'href': url1, 'target': '_blank' }, url1),
-            ),
-            E('div', { 'class': 'cbi-section-descr fade-in' },
-                E('a', { 'href': url2, 'target': '_blank' }, url2),
-            ),
-            E('div', { 'class': 'cbi-section fade-in' }, [
-                status_string,
+        return E('div', { 'class': 'owz-theme owz-service-page owz-art-shell' }, [
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }),
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/terminal-art.css') + '?v=2' }),
+            E('div', { 'class': 'owz-service-titleline' }, [
+                E('h2', _('Diagnostics & Tools')),
+                E('span', { 'class': 'owz-tty-version' }, page_title.replace(' &nbsp ', '  '))
             ]),
-            E('div', { 'class': 'cbi-section fade-in' },
-                layout
-            ),
+            aux1, aux2,
+            E('div', { 'class': 'owz-service-machine' }, [
+                E('section', { 'class': 'owz-service-status-bay' }, [
+                    E('div', { 'class': 'owz-metal-ridge', 'aria-hidden': 'true' }, '  /________________________________________/|'),
+                    E('h3', _('System information')),
+                    E('div', { 'class': 'owz-art-status' }, status_string),
+                    E('div', { 'class': 'owz-metal-floor', 'aria-hidden': 'true' }, '  \\________________________________________\\|')
+                ]),
+                E('aside', { 'class': 'owz-service-monitor-bay', 'aria-hidden': 'true' }, [
+                    E('pre', { 'class': 'owz-art owz-service-crt' }, "   .--------------------.\n  / _________________  /|\n | |  >_             | ||\n | |  nfqws2         | ||\n | |  SYS / MONITOR  | /|\n | |_________________|/ |\n |_____________________/\n      /|          |\\\n     /_|__________|_\\"),
+                    E('pre', { 'class': 'owz-art owz-circuit' }, "   .----.      .-------.       .-------.\n  | WAN|------|NFQUEUE|-------| nfqws2 |\n   '----'      '-------'       '-------'\n      network path // schematic")
+                ])
+            ]),
+            E('div', { 'class': 'owz-service-bottom' }, [
+                E('section', { 'class': 'owz-service-actions-bay' }, [
+                    E('h3', _('Diagnostic tools')),
+                    E('div', { 'class': 'owz-art-actions' }, layout),
+                    E('pre', { 'class': 'owz-art owz-service-footline', 'aria-hidden': 'true' }, ' /======================================/\n/______________________________________/')
+                ]),
+                E('section', { 'class': 'owz-service-sources-bay' }, [
+                    E('h3', _('Sources')),
+                    E('div', { 'class': 'owz-art-sources' }, [
+                        E('div', {}, [ '+-- ', E('a', { 'href': url1, 'target': '_blank', 'rel': 'noopener noreferrer' }, url1) ]),
+                        E('div', {}, [ '\\-- ', E('a', { 'href': url2, 'target': '_blank', 'rel': 'noopener noreferrer' }, url2) ])
+                    ])
+                ])
+            ])
         ]);
     },
 

@@ -1,0 +1,102 @@
+/* OpenWRTZapret Dashboard only. No global LuCI theme overrides. */
+.owz-dashboard {
+    --owz-purple: #ba70ff;
+    min-width: 0;
+}
+.owz-dashboard .owz-screenreader {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+.owz-dashboard .owz-ascii-title {
+    display: block;
+    box-sizing: border-box;
+    /* Strip LuCI's default <pre> card styling. */
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    outline: 0;
+    white-space: pre;
+    overflow-x: auto;
+    max-width: 100%;
+    margin: 12px 0 9px;
+    padding: 0 0 3px;
+    color: var(--owz-purple);
+    text-shadow: 0 0 7px rgba(173, 79, 255, .26);
+    font: 600 clamp(5.5px, .61vw, 9px)/1.03 'DejaVu Sans Mono', Consolas, 'Liberation Mono', monospace;
+    letter-spacing: 0;
+    text-align: left;
+}
+.owz-dashboard .owz-dashboard-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 55%) minmax(0, 45%);
+    align-items: start;
+    gap: 4px;
+    min-width: 0;
+}
+.owz-dashboard .owz-dashboard-status { min-width: 0; }
+.owz-dashboard .owz-dashboard-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+}
+.owz-dashboard .owz-eye-panel {
+    position: relative;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    min-width: 0;
+    min-height: 315px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    pointer-events: none;
+}
+.owz-dashboard .owz-eye-panel::before {
+    content: '';
+    position: absolute;
+    inset: 17% 0 4%;
+    background: radial-gradient(ellipse at center, rgba(86, 45, 125, .09), transparent 67%);
+}
+.owz-dashboard .owz-eye-art {
+    position: relative;
+    /* Same reset for the eye's <pre>. */
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    outline: 0;
+    padding: 0 !important;
+    color: #ddd;
+    line-height: 1.04;
+    white-space: pre;
+    letter-spacing: 0;
+    margin: 0;
+    font: 500 clamp(7px, .68vw, 9.5px)/1.04 'DejaVu Sans Mono', Consolas, monospace;
+    text-align: left;
+    user-select: none;
+    will-change: transform;
+    transition: transform .13s ease-out;
+}
+.owz-dashboard .owz-eye-art .p { color: #ac59ff; text-shadow: 0 0 5px rgba(163, 81, 255, .37); }
+.owz-dashboard .owz-eye-art .w { color: #e0dce8; }
+.owz-dashboard .owz-eye-art .d { color: #696274; }
+.owz-dashboard .owz-eye-art .m { color: #85619e; }
+@media (max-width: 900px) {
+    .owz-dashboard .owz-dashboard-layout { grid-template-columns: 1fr; }
+    .owz-dashboard .owz-eye-panel { min-height: 300px; }
+    .owz-dashboard .owz-eye-art { font-size: clamp(6px, 1.42vw, 8.5px); }
+    .owz-dashboard .owz-ascii-title { font-size: clamp(5px, .8vw, 7px); }
+}
+@media (max-width: 540px) {
+    .owz-dashboard .owz-ascii-title { font-size: 5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .owz-dashboard .owz-eye-art { transition: none; will-change: auto; }
+    .owz-dashboard .owz-eye-art .p { text-shadow: none; }
+}
