@@ -430,7 +430,7 @@ owz_list_put() {
 	if ! owz_lock list_put; then printf '%s\n' '{"ok":false,"error":"busy"}'; return 0; fi
 	owz_list_paths_ready "$target" || { printf '%s\n' '{"ok":false,"error":"list_unavailable"}'; return 0; }
 	tmp=$(mktemp /tmp/openwrtzapret-list.XXXXXX) || { printf '%s\n' '{"ok":false,"error":"temporary_file_failed"}'; return 0; }
-	if [ "$data" = - ]; then : > "$tmp"; else printf '%s' "$data" | base64 -d > "$tmp" 2>/dev/null; fi
+	if [ "$data" = - ]; then : > "$tmp"; else printf '%s' "$data" | /bin/busybox base64 -d > "$tmp" 2>/dev/null; fi
 	if [ "$?" -ne 0 ] || [ "$(wc -c < "$tmp")" -gt 49152 ] ||
 		! LC_ALL=C tr -d '\000' < "$tmp" | cmp -s - "$tmp"; then
 		rm -f "$tmp"
