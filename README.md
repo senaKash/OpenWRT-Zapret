@@ -1,161 +1,160 @@
-# OpenWRTZapret
+<h1 align="center">OpenWRT-Zapret</h1>
 
-**OpenWRTZapret** — веб-интерфейс LuCI для управления [Zapret2](https://github.com/bol-van/zapret2) (`nfqws2`) на маршрутизаторах с OpenWrt. Управление сервисом, стратегиями, тестами и пользовательскими списками — из браузера, без постоянной работы через SSH.
+<p align="center"><strong>Расширение LuCI для настройки и управления обходом DPI на OpenWrt.</strong></p>
 
-![OpenWrt](https://img.shields.io/badge/platform-OpenWrt-00ADEF?logo=openwrt&logoColor=white)
-![LuCI](https://img.shields.io/badge/interface-LuCI-2878B5)
-![Engine](https://img.shields.io/badge/engine-Zapret2-6A5ACD)
-![License](https://img.shields.io/badge/license-MIT-green)
+<p align="center">Управление сервисом, стратегиями, тестированием и сетевыми списками — из веб-интерфейса маршрутизатора.</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/OpenWrt-00ADEF?style=for-the-badge&amp;logo=openwrt&amp;logoColor=white" alt="OpenWrt" />
+  <img src="https://img.shields.io/badge/LuCI-2563EB?style=for-the-badge" alt="LuCI" />
+  <img src="https://img.shields.io/badge/Release-r2-8B5CF6?style=for-the-badge" alt="Release r2" />
+  <img src="https://img.shields.io/badge/Status-Preview-F59E0B?style=for-the-badge" alt="Preview" />
+  <img src="https://img.shields.io/badge/License-MIT-22C55E?style=for-the-badge" alt="MIT" />
+</p>
+
+<p align="center"><img src="docs/media/dashboard-demo.gif" alt="Демонстрация интерфейса OpenWRTZapret" width="900" /></p>
+
+<p align="center">
+  <a href="https://github.com/senaKash/OpenWRT-Zapret/releases"><strong>Релизы</strong></a> ·
+  <a href="#-документация"><strong>Документация</strong></a> ·
+  <a href="https://github.com/senaKash/OpenWRT-Zapret/issues"><strong>Сообщить о проблеме</strong></a>
+</p>
+
+---
+
+## ✨ Возможности
+
+| Раздел | Что доступно |
+| :-- | :-- |
+| 🟦 **Dashboard** | Состояние сервиса, активный профиль, **Start / Stop / Restart** |
+| 🟪 **Strategies** | Выбор и применение стратегий, **Test / Test All**, результаты проверок |
+| 🟨 **Update Strategies** | Обновление стратегий с отображением этапов и **прогресса** |
+| 🟩 **Import Strategy** | Импорт поддерживаемых `general*.bat` **без запуска BAT-файлов** |
+| 🟧 **Lists** | Домены, IP-адреса, пользовательские списки и исключения |
+| ⬜ **Diagnostics / Log Viewer** | Диагностика сервиса и просмотр журналов |
+
+> [!TIP]
+> **Тестирование без ручной смены настроек.** На время проверки стратегия активируется на маршрутизаторе, после чего предусмотрено восстановление предыдущей конфигурации.
+>
+> Результаты теста с роутера могут отличаться от поведения устройств в локальной сети.
+
+---
+
+## 📦 Установка
+
+**Проверенная конфигурация:**
+
+| Устройство | Прошивка | Архитектура | Пакет |
+| :-- | :-- | :-- | :-- |
+| **Xiaomi AX3000T v2** | OpenWrt SNAPSHOT | `aarch64_cortex-a53` | `apk` |
 
 > [!IMPORTANT]
-> Проект находится в разработке. Проверяйте совместимость пакетов с прошивкой и архитектурой устройства. Наличие интерфейса не означает, что какая-либо стратегия гарантированно работает в вашей сети.
+> **Сверяйте архитектуру и зависимости с вашей прошивкой.** Текущий APK проверен на устройстве выше; совместимость с другими моделями пока не подтверждена. Для модулей ядра важна также совместимость ABI.
 
-## Демонстрация
+**1.** Возьмите файл `openwrtzapret-0.9.20260307-r2.apk` на странице [**Releases**](https://github.com/senaKash/OpenWRT-Zapret/releases).
 
-![Демонстрация интерфейса OpenWRTZapret](docs/media/dashboard-demo.gif)
-
-## Возможности
-
-- **Dashboard:** состояние `zapret2` / `nfqws2`, активный профиль, кнопки Start / Stop / Restart.
-- **Strategies:** выбор и применение стратегий, тест отдельного профиля и последовательный **Test All**, отображение результатов.
-- **Import Strategy:** импорт поддерживаемых `general*.bat` из [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) как данных — BAT-файл **не исполняется**.
-- **Lists:** редактирование встроенных списков доменов/IP через пользовательские overrides, сброс к исходным спискам, применение изменений через **Apply Changes** с перезапуском сервиса.
-- **Diagnostics & Tools / Log Viewer:** диагностика и просмотр журналов.
-- **Защита текущего состояния:** при тестах и применении стратегий используются предусмотренные проектом механизмы восстановления исходной конфигурации при ошибке.
-
-## Требования
-
-- OpenWrt с LuCI и совместимыми пакетами `rpcd-mod-ucode`, `ucode`, `nftables`.
-- Совместимый движок **Zapret2** (`zapret2`, `nfqws2`).
-- Поддержка NFQUEUE и соответствующие модули ядра; набор модулей зависит от прошивки.
-- Для установки приведёнными ниже командами — OpenWrt с пакетным менеджером **`apk`**.
-
-**Важно:** пакет LuCI (`luci-app-zapret2`) и движок (`zapret2`) — разные пакеты. Версия LuCI `r31` не означает, что релиз движка тоже `r31`. APK движка привязан к архитектуре, а модули ядра — ещё и к версии/ABI прошивки. Сборки для другой платформы устанавливать нельзя.
-
-## Установка
-
-Перейдите в [GitHub Releases](https://github.com/senaKash/OpenWRT-Zapret/releases) и проверьте раздел **Assets** выбранного релиза. Выбирайте пакеты под свою версию OpenWrt и архитектуру; не путайте исходники `Source code` с установочными APK.
-
-### Если Zapret2 уже установлен
-
-Если движок `zapret2` совместимой версии уже есть на роутере, достаточно обновить интерфейс `luci-app-zapret2`.
-
-**1. Передать APK** — на компьютере в каталоге с загруженным файлом:
+**2.** Отправьте APK на роутер **с компьютера**:
 
 ```sh
-scp -O luci-app-zapret2-*.apk root@192.168.1.1:/tmp/
+scp -O openwrtzapret-0.9.20260307-r2.apk root@192.168.1.1:/tmp/openwrtzapret.apk
 ```
 
-**2. Подключиться к роутеру:**
+**3.** Подключитесь по SSH и установите пакет **на роутере**:
 
 ```sh
 ssh root@192.168.1.1
+apk add --allow-untrusted /tmp/openwrtzapret.apk
 ```
 
-**3. Установить интерфейс** — уже в SSH на роутере:
+**4.** Откройте **LuCI → Services → OpenWRTZapret**.
+
+> [!NOTE]
+> `192.168.1.1` — пример адреса роутера. Для установки недостающих зависимостей нужен доступ к совместимым репозиториям OpenWrt.
+
+<details>
+<summary><b>🔄 Обновление установленной версии</b></summary>
+
+После передачи нового APK в `/tmp/openwrtzapret.apk` выполните:
 
 ```sh
-apk add --allow-untrusted /tmp/luci-app-zapret2-*.apk
+apk add --allow-untrusted --upgrade /tmp/openwrtzapret.apk
 ```
 
-**4. Проверить установку:**
+Если репозитории временно недоступны, **а все зависимости уже установлены**:
 
 ```sh
-apk list --installed luci-app-zapret2 zapret2
+apk add --repositories-file /dev/null --allow-untrusted --upgrade /tmp/openwrtzapret.apk
 ```
 
-Откройте **LuCI → Services → OpenWRTZapret**.
+Обновите страницу LuCI без кеша (`Ctrl + F5`).
 
-> Замените `192.168.1.1` фактическим IP роутера. Опция `scp -O` нужна для некоторых сборок OpenWrt с Dropbear.
+</details>
 
-### Если Zapret2 не установлен
+<details>
+<summary><b>⚠️ Переход с отдельных zapret2 и luci-app-zapret2</b></summary>
 
-Для новой установки необходимы **оба** совместимых пакета:
+Единый пакет **конфликтует** с отдельно установленными `zapret2` и `luci-app-zapret2`.
 
-- `zapret2-*.apk` — движок, собранный под вашу архитектуру и прошивку;
-- `luci-app-zapret2-*.apk` — веб-интерфейс.
-
-Если **оба файла действительно присутствуют** в Assets выбранного релиза, передайте и установите их вместе.
-
-**1. Передать два APK:**
+**Сначала сохраните конфигурацию и пользовательские стратегии.** Проверьте, что будет удалено:
 
 ```sh
-scp -O zapret2-*.apk luci-app-zapret2-*.apk root@192.168.1.1:/tmp/
+apk del --simulate luci-app-zapret2 zapret2
 ```
 
-**2. Подключиться к роутеру:**
+Если список удаления проверен и необходимые зависимости доступны, удалите старые пакеты:
 
 ```sh
-ssh root@192.168.1.1
+apk del luci-app-zapret2 zapret2
 ```
 
-**3. Установить два пакета:**
+Затем установите `openwrtzapret.apk` по инструкции выше. **Не используйте `--force`** для обхода конфликтов и несовместимости зависимостей.
 
-```sh
-apk add --allow-untrusted /tmp/zapret2-*.apk /tmp/luci-app-zapret2-*.apk
-```
+</details>
 
-Если в релизе опубликован **только** `luci-app-zapret2-*.apk`, это **не** комплект для чистой установки. Сначала получите совместимый `zapret2` из своего репозитория пакетов или соберите его из исходников этого проекта (см. ниже). Не устанавливайте случайный APK от другой архитектуры или несовместимой версии OpenWrt.
+---
 
-> Пакетный менеджер может дополнительно загрузить зависимости из настроенных репозиториев OpenWrt. Если нужной зависимости нет или её ABI несовместим, установка не завершится — это не исправляется принудительной установкой чужого пакета.
+## 🛠️ Сборка из исходников
 
-## Сборка из исходников
+<details>
+<summary><b>Показать инструкцию для OpenWrt buildroot</b></summary>
 
-Сборку выполняйте в **OpenWrt buildroot**, настроенном под целевую систему. Для SDK состав необходимых инструментов и целей сборки может отличаться.
-
-Добавьте репозиторий как feed в `feeds.conf` (подставьте реальный путь):
+Используйте buildroot, настроенный под целевую систему. Добавьте feed в `feeds.conf`:
 
 ```text
-src-link openwrtzapret /path/to/OpenWRTZapret
+src-git openwrtzapret https://github.com/senaKash/OpenWRT-Zapret.git;openwrtzapret
 ```
 
-Из корня OpenWrt buildroot выполните команды.
-
-**1. Установить feed:**
+В корне buildroot:
 
 ```sh
 ./scripts/feeds update openwrtzapret
-./scripts/feeds install -p openwrtzapret zapret2 luci-app-zapret2
-make defconfig
+./scripts/feeds install -p openwrtzapret openwrtzapret
+make menuconfig
 ```
 
-**2. Собрать движок:**
+Выберите пакет **`openwrtzapret`** в режиме модуля (`M`), затем выполните:
 
 ```sh
-make package/feeds/openwrtzapret/zapret2/compile V=s
+make package/feeds/openwrtzapret/openwrtzapret/compile V=s -j1
 ```
 
-**3. Собрать LuCI:**
+Результат: `bin/packages/<architecture>/openwrtzapret/openwrtzapret-*.apk`.
 
-```sh
-make package/feeds/openwrtzapret/luci-app-zapret2/compile V=s
-```
+</details>
 
-Готовые пакеты ищите в `bin/packages/<architecture>/openwrtzapret/` (или соответствующем каталоге сборки). Для полноценной установки нужны APK движка и интерфейса, а также доступные совместимые зависимости.
+## 📚 Документация
 
-### Локальная разработка
+| Тема | Ссылка |
+| :-- | :-- |
+| Архитектура | [docs/architecture.md](docs/architecture.md) |
+| Тестирование стратегий | [docs/testing.md](docs/testing.md) |
+| Формат профилей | [docs/profile-format.md](docs/profile-format.md) |
+| Импорт стратегий | [docs/flowseal-import.md](docs/flowseal-import.md) |
 
-В репозитории есть `tools/dev-feed+build.sh` — вспомогательный скрипт автора для обновления feed, сборки **LuCI APK** и установки его на тестовый роутер. **Он не является универсальным установщиком**: содержит локальный путь к OpenWrt buildroot, ветку `dev-luci-ui` и IP тестового роутера. Он не публикует файлы в GitHub Releases и не готовит оба APK для нового устройства.
+---
 
-## Работа в интерфейсе
+## ⚖️ Компоненты и лицензии
 
-- **Dashboard** — статус и управление запуском сервиса.
-- **Strategies** — выбор, тестирование и применение профилей.
-- **Import Strategy** — импорт совместимых конфигураций.
-- **Lists** — редактирование списков и отдельное **Apply Changes** для применения сохранённых правок.
-- **Diagnostics & Tools** — диагностика.
-- **Log Viewer** — журнал.
+Для обработки трафика используется [Zapret2](https://github.com/bol-van/zapret2) (`nfqws2`). Поддерживается импорт стратегий из [zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube). Эти проекты развиваются независимо от OpenWRTZapret.
 
-Тесты стратегий выполняются с самого роутера. Результаты могут отличаться от работы браузера или отдельных LAN-клиентов, в частности для UDP/QUIC.
-
-## Документация
-
-- [Архитектура](docs/architecture.md)
-- [Тестирование стратегий](docs/testing.md)
-- [Формат профиля](docs/profile-format.md)
-- [Импорт стратегий](docs/flowseal-import.md)
-- [Сторонние компоненты и лицензии](THIRD_PARTY_NOTICES.md)
-
-## Лицензия и авторство
-
-Исходный код OpenWRTZapret распространяется на условиях [MIT](LICENSE). Сведения о сторонних компонентах и их лицензиях приведены в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Движок Zapret2 — отдельный проект [bol-van/zapret2](https://github.com/bol-van/zapret2).
+**Лицензия OpenWRTZapret:** [MIT](LICENSE) · **Лицензии сторонних компонентов:** [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
