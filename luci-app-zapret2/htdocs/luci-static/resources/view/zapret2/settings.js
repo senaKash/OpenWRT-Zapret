@@ -12,6 +12,12 @@ const getStatus = rpc.declare({ object: 'openwrtzapret', method: 'status', expec
 const restartService = rpc.declare({ object: 'openwrtzapret', method: 'restart', expect: { '': {} }, reject: true });
 
 const MAX_LIST_BYTES = 49152;
+const LIST_TARGETS = {
+    'list-google.txt': 'zapret-hosts-google.txt',
+    'list-general-user.txt': 'zapret-hosts-user.txt',
+    'list-exclude-user.txt': 'zapret-hosts-user-exclude.txt',
+    'ipset-exclude.txt': 'zapret-ip-exclude.txt'
+};
 
 document.head.appendChild(E('link', {
     rel: 'stylesheet', href: L.resource('view/zapret2/strategies.css') + '?v=28'
@@ -72,7 +78,7 @@ return view.extend({
             let actions = E('div', { 'class': 'owz-list-actions' }, [
                 E('button', {
                     'class': 'btn cbi-button owz-list-edit-button',
-                    'disabled': this.busy || !item.target,
+                    'disabled': this.busy,
                     'click': L.bind(this.editList, this, item)
                 }, _('Edit'))
             ]);
@@ -97,11 +103,11 @@ return view.extend({
     },
 
     editList: async function(item) {
-        if (this.busy || !this.available || !item?.target) return;
+        if (this.busy || !this.available || !item || !Object.prototype.hasOwnProperty.call(LIST_TARGETS, item.name)) return;
 
         let content;
         try {
-            content = await fs.read('/opt/zapret2/ipset/' + item.target);
+            content = await fs.read('/opt/zapret2/ipset/' + LIST_TARGETS[item.name]);
         }
         catch (e) {
             this.notify(_('Unable to read %s: %s').format(item.name, e.message || e));

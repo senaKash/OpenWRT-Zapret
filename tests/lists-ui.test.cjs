@@ -10,7 +10,7 @@ assert.equal(Object.keys(menu).filter(key => key.endsWith('/lists')).length, 0);
 const code = fsNode.readFileSync('luci-app-zapret2/htdocs/luci-static/resources/view/zapret2/settings.js', 'utf8');
 assert.equal(code.includes('Zapret2 file'), false);
 assert.equal(code.includes('handleFiles'), false);
-assert.equal(code.includes("fs.read('/opt/zapret2/ipset/' + item.target)"), true);
+assert.equal(code.includes("fs.read('/opt/zapret2/ipset/' + LIST_TARGETS[item.name])"), true);
 
 const calls = [], reads = [], notifications = [];
 let modal = null;
@@ -68,6 +68,7 @@ assert.deepEqual(headers, ['List', 'Source', 'Action']);
 const editButtons = find(rendered, 'button').filter(node => node.children[0] === 'Edit');
 assert.equal(editButtons.length, 4);
 assert.equal(editButtons.every(button => button.attrs.disabled === false), true);
+delete page.lists[0].target; // Old or incomplete RPC responses must not disable Edit.
 page.lists[0].source = 'missing';
 page.renderRows();
 assert.equal(find({ children: [page.rows] }, 'button').find(button => button.children[0] === 'Edit').attrs.disabled, false);
