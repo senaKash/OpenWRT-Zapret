@@ -238,6 +238,7 @@ jobs:
         working-directory: ${{ env.SDKDIR }}
         env:
           ARCH_TAG: ${{ matrix.arch }}
+        shell: bash
         run: |
           set -euo pipefail
           OUTDIR="$GITHUB_WORKSPACE/openwrtzapret-apk-$ARCH_TAG"
