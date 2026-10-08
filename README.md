@@ -1,146 +1,88 @@
-# OpenWRT-Zapret
+# OpenWRTZapret
 
-OpenWRTZapret — интерфейс управления и менеджер стратегий для Zapret2/nfqws2 на OpenWrt.
+LuCI-пакет для управления Zapret2 на OpenWrt.
 
-Проект добавляет в LuCI управление состоянием Zapret2, работу с профилями стратегий, безопасное применение с откатом, тестирование стратегий и импорт конфигураций Flowseal. Сам механизм обхода DPI остаётся за Zapret2/nfqws2; OpenWRTZapret выступает управляющим слоем поверх него.
+![OpenWrt](https://img.shields.io/badge/platform-OpenWrt-00ADEF?logo=openwrt&logoColor=white)
+![LuCI](https://img.shields.io/badge/interface-LuCI-2878B5)
+![Engine](https://img.shields.io/badge/engine-Zapret2-6A5ACD)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-> **Status:** pre-release. Основной функционал реализован, но текущая версия ещё проходит проверку на целевых OpenWrt-системах.
+**Теги:** `openwrt` · `luci` · `zapret2` · `nftables` · `router` · `dpi-bypass`
+
+> Статус: разработка. Совместимость проверяйте на целевой версии OpenWrt.
 
 ## Возможности
 
-- Dashboard в LuCI со статусом `nfqws2`, nftables, NFQUEUE и автозапуска.
-- Start / Stop / Restart с проверкой фактического состояния сервиса.
-- Профили стратегий из источников `builtin`, `flowseal` и `user`.
-- Режим `Manual / Settings` для использования обычного `/opt/zapret2/config`.
-- Безопасный Apply: перед изменением сохраняются текущий профиль, runtime-конфигурация и состояние сервиса; при ошибке выполняется rollback.
-- `Test Strategy` — временный запуск выбранной стратегии с последующим восстановлением исходного состояния.
-- `Test All` — последовательная проверка совместимых стратегий без автоматического применения результата.
-- Сетевые проверки для YouTube, GoogleVideo, Discord, Discord Media и Discord Voice UDP/transport.
-- Асинхронные задачи для долгих операций, журнал состояния и восстановление после прерывания.
-- Импорт `general*.bat` из Flowseal как данных, без запуска Windows-скриптов и исполняемых файлов.
-- Проверка stable-релизов Flowseal и обновление набора стратегий с состояниями `Added`, `Changed`, `Unchanged` и `Unsupported`.
+- Статус и управление сервисом.
+- Профили стратегий: применение, тест выбранного профиля и последовательный тест совместимых профилей.
+- Списки доменов и IP: встроенные списки и пользовательские overrides.
+- Диагностика, журнал и восстановление после прерванной тестовой задачи.
+- Импорт совместимых конфигов Zapret для ПК (`general*.bat`); поддерживается часть параметров, файлы преобразуются и не запускаются.
 
 ## Требования
 
-OpenWRTZapret рассчитан на OpenWrt с LuCI, `rpcd`, `rpcd-mod-ucode`, nftables и установленным Zapret2/nfqws2.
+- OpenWrt с LuCI, `rpcd-mod-ucode` и nftables.
+- Установленный пакет Zapret2 и `nfqws2`.
+- Для очередей NFQUEUE — соответствующие прошивке модули, обычно `kmod-nfnetlink-queue` и `kmod-nft-queue`.
 
-Для NFQUEUE обычно требуются:
+Модули ядра и пакеты должны соответствовать версии прошивки и ABI ядра устройства.
 
-```text
-kmod-nfnetlink-queue
-kmod-nft-queue
-```
+## Установка из релиза
 
-Для SNAPSHOT и сторонних сборок OpenWrt пакеты и kernel-модули должны соответствовать конкретной версии прошивки и ABI ядра.
+Откройте [Releases](https://github.com/senaKash/OpenWRT-Zapret/releases) и скачайте пакеты `zapret2_*.apk` и `luci-app-zapret2_*.apk`, соответствующие вашей системе.
 
-## Установка
-
-На данный момент готовые релизные APK не публикуются, поэтому пакеты необходимо собрать под целевую версию OpenWrt.
-
-После сборки должны быть получены два пакета:
-
-```text
-luci-app-zapret2_*.apk
-zapret2_*.apk
-```
-
-Скопируйте их на роутер, например:
+Скопируйте их на роутер:
 
 ```sh
-scp luci-app-zapret2_*.apk root@192.168.1.1:/tmp/
-scp zapret2_*.apk root@192.168.1.1:/tmp/
+scp zapret2_*.apk luci-app-zapret2_*.apk root@192.168.1.1:/tmp/
 ```
 
-Подключитесь по SSH и установите сначала LuCI-пакет, затем основной пакет:
+На OpenWrt с `apk` установите оба пакета:
 
 ```sh
-apk add --allow-untrusted /tmp/luci-app-zapret2_*.apk
-apk add --allow-untrusted /tmp/zapret2_*.apk
+apk add --allow-untrusted /tmp/zapret2_*.apk /tmp/luci-app-zapret2_*.apk
 ```
 
-После установки перезапустите `rpcd` и веб-интерфейс:
+Откройте LuCI: **Services → OpenWRTZapret**.
 
-```sh
-/etc/init.d/rpcd restart
-/etc/init.d/uhttpd restart
-```
+## Сборка из исходного кода
 
-После этого откройте LuCI и перейдите в:
-
-```text
-Services → OpenWRTZapret
-```
-
-Перед первым применением профилей рекомендуется убедиться, что Dashboard корректно определяет текущее состояние Zapret2.
-
-## Сборка
-
-Используйте OpenWrt SDK или buildroot, соответствующий прошивке роутера.
-
-Добавьте репозиторий как локальный feed:
+Собирайте пакеты в OpenWrt SDK или buildroot, подходящем для целевой прошивки. Добавьте репозиторий в `feeds.conf`:
 
 ```text
 src-link openwrtzapret /path/to/OpenWRTZapret
 ```
 
-Затем:
+Затем из корня OpenWrt SDK/buildroot:
 
 ```sh
 ./scripts/feeds update -a
 ./scripts/feeds install -p openwrtzapret zapret2 luci-app-zapret2
-
 make defconfig
-
 make package/zapret2/compile V=s
 make package/luci-app-zapret2/compile V=s
 ```
 
-Найти собранные пакеты можно командой:
+Пакеты появятся в `bin/`. Используйте сборку для версии OpenWrt и архитектуры устройства.
 
-```sh
-find bin -type f \( -name 'zapret2*.apk' -o -name 'luci-app-zapret2*.apk' \)
-```
+## Работа в LuCI
 
-Не устанавливайте пакеты, собранные для несовместимого OpenWrt SNAPSHOT или другого kernel ABI.
+- **Dashboard** — состояние и управление сервисом.
+- **Strategies** — выбор профиля, Apply, тест выбранной стратегии и Test All.
+- **Lists** — встроенные списки и пользовательские overrides. После изменения нажмите **Apply Changes**.
+- **Diagnostics & Tools** и **Log Viewer** — диагностика и журналы.
+- **Import Strategy** — импорт поддерживаемого файла стратегии.
 
-## Использование
+Тесты временно запускают профиль, выполняют сетевые проверки с роутера и восстанавливают исходную конфигурацию. Результат может отличаться от поведения трафика LAN-клиента.
 
-По умолчанию можно оставить Zapret2 в режиме `Manual / Settings`. В этом режиме OpenWRTZapret не управляет содержимым `/opt/zapret2/config`.
+## Документация
 
-Для работы с профилями откройте страницу Strategies, выберите стратегию и сначала запустите `Test Strategy`. Тест временно применяет профиль, выполняет проверки и затем восстанавливает предыдущую конфигурацию и исходное состояние сервиса.
+- [Архитектура](docs/architecture.md)
+- [Тестирование стратегий](docs/testing.md)
+- [Формат профиля](docs/profile-format.md)
+- [Импорт стратегий](docs/flowseal-import.md) ([источник](https://github.com/Flowseal/zapret-discord-youtube))
+- [Сторонние компоненты и лицензии](THIRD_PARTY_NOTICES.md)
 
-Если результат устраивает, профиль можно применить вручную через `Apply`.
+## Лицензия
 
-`Test All` использует тот же механизм временного применения и восстановления для последовательной проверки всех совместимых профилей. OpenWRTZapret не выбирает и не применяет «лучшую» стратегию автоматически.
-
-## Flowseal
-
-OpenWRTZapret может импортировать стратегии из проекта [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube).
-
-Файлы `general*.bat` рассматриваются только как входные данные. `.bat`, `.cmd`, `.exe` и `.ps1` не выполняются.
-
-Импортер разбирает поддерживаемые параметры, формирует профиль OpenWRTZapret и отмечает неизвестные опции как несовместимые. Несовместимый профиль отображается в интерфейсе, но не может быть применён.
-
-Flowseal updater загружает stable-релиз во временный каталог, проверяет архив, импортирует стратегии и необходимые assets. Обновление не меняет активный профиль и не обновляет сам Zapret2/nfqws2.
-
-## Надёжность
-
-Операции применения и тестирования используют snapshot предыдущего состояния. При ошибке OpenWRTZapret пытается восстановить предыдущую runtime-конфигурацию, активный профиль и состояние `RUNNING`/`STOPPED`.
-
-Долгие операции выполняются как отдельные jobs. Восстановление не должно зависеть от открытой вкладки браузера или активного RPC-соединения.
-
-Проверка firewall/NFQUEUE является структурной: она подтверждает наличие ожидаемого процесса и правил nftables, но не является полной трассировкой прохождения каждого пакета.
-
-## Текущий статус
-
-Локально реализованы Dashboard, управление сервисом, профили, Apply/Rollback, `Test Strategy`, `Test All`, асинхронные jobs, Flowseal parser/converter и Flowseal updater.
-
-До первого стабильного релиза необходимо подтвердить сборку и работу на целевом OpenWrt, включая rpcd/ucode, Apply/Rollback, сетевые тесты и обновление Flowseal.
-
-## Происхождение и лицензии
-
-OpenWRTZapret основан на пакетной инфраструктуре [remittor/zapret-openwrt](https://github.com/remittor/zapret-openwrt) и использует [bol-van/zapret2](https://github.com/bol-van/zapret2) как DPI-bypass engine.
-
-Flowseal используется как источник стратегий и данных для импорта.
-
-Информация о сторонних компонентах и лицензиях находится в `THIRD_PARTY_NOTICES.md`.
+Основная лицензия репозитория — MIT, см. [LICENSE](LICENSE). Сведения о стороннем коде и его лицензиях приведены в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
