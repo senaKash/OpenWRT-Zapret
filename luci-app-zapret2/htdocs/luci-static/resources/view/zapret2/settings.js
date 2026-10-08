@@ -78,7 +78,7 @@ return view.extend({
             let actions = E('div', { 'class': 'owz-list-actions' }, [
                 E('button', {
                     'class': 'btn cbi-button owz-list-edit-button',
-                    'disabled': this.busy,
+                    'disabled': this.busy ? true : null,
                     'click': L.bind(this.editList, this, item)
                 }, _('Edit'))
             ]);
@@ -86,7 +86,7 @@ return view.extend({
             if (source == 'custom') {
                 actions.appendChild(E('button', {
                     'class': 'btn cbi-button-negative owz-list-reset-button',
-                    'disabled': this.busy,
+                    'disabled': this.busy ? true : null,
                     'click': L.bind(this.removeOverride, this, item.name)
                 }, _('Reset')));
             }
