@@ -205,6 +205,7 @@ jobs:
         working-directory: ${{ env.SDKDIR }}
         run: |
           # Select unified package, not legacy zapret2 / luci-app-zapret2.
+          touch .config
           sed -i '/^CONFIG_PACKAGE_openwrtzapret=/d; /^# CONFIG_PACKAGE_openwrtzapret is not set$/d' .config
           printf '%s\n' 'CONFIG_PACKAGE_openwrtzapret=m' >> .config
           make defconfig
