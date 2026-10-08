@@ -7,7 +7,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=openwrtzapret
 PKG_VERSION:=0.9.20260307
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_MAINTAINER:=OpenWRTZapret contributors
 PKG_LICENSE:=MIT
