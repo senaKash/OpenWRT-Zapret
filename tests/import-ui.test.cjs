@@ -17,7 +17,7 @@ const context = {
     ui: { addNotification: (_title, node) => notifications.push(node) },
     _: value => value,
     E,
-    L: { bind: (fn, receiver) => fn.bind(receiver), url: path => path },
+    L: { bind: (fn, receiver) => fn.bind(receiver), url: path => path, resource: path => path },
     window: { location: { href: '' } },
     TextEncoder,
     btoa
