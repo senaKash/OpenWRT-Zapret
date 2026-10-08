@@ -2,35 +2,6 @@ name: build
 
 on:
   workflow_dispatch:
-    inputs:
-      test_build:
-        description: 'Test build'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-        - true
-        - false
-      fake_build:
-        description: 'Fake build'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-        - true
-        - false
-      max_speed:
-        description: 'Build with max speed'
-        required: false
-        default: 'true'
-        type: choice
-        options:
-        - true
-        - false
-
-  push:
-    tags:
-      - v[0-9]+*
 
 env:
   TEST_BUILD: ${{ github.event.inputs.test_build == 'true' }}
@@ -128,53 +99,11 @@ jobs:
       fail-fast: false
       matrix:
         branch:
-          - ${{ needs.var.outputs.IPK_BRANCH }}
           - ${{ needs.var.outputs.APK_BRANCH }}
         arch:
           - aarch64_cortex-a53
-          - aarch64_cortex-a72
-          - aarch64_cortex-a76
           - aarch64_generic
-          - arm_arm1176jzf-s_vfp
-          - arm_arm926ej-s
-          - arm_cortex-a15_neon-vfpv4
-          - arm_cortex-a5_vfpv4
-          - arm_cortex-a7
-          - arm_cortex-a7_neon-vfpv4
-          - arm_cortex-a7_vfpv4
-          - arm_cortex-a8_vfpv3
-          - arm_cortex-a9
-          - arm_cortex-a9_neon
-          - arm_cortex-a9_vfpv3-d16
-          - arm_fa526
-          - arm_xscale
-          - mips64_octeonplus
-          - mips_24kc
-          - mips_4kec
-          - mips_mips32
-          - mipsel_24kc
-          - mipsel_24kc_24kf
-          - mipsel_74kc
-          - mipsel_mips32
-          - riscv64_generic
           - x86_64
-        isTestOrFake:
-          - ${{ needs.check.outputs.test_build == 'true' || needs.check.outputs.fake_build == 'true' }}
-        exclude:
-          - branch: ${{ needs.var.outputs.APK_BRANCH }}
-            arch: arm_cortex-a9_vfpv3-d16
-          - branch: ${{ needs.var.outputs.APK_BRANCH }}
-            arch: mips_4kec
-          - branch: ${{ needs.var.outputs.IPK_BRANCH }}
-            arch: riscv64_generic
-          - { isTestOrFake: true }
-        include:
-          - branch: ${{ needs.var.outputs.IPK_BRANCH }}
-            arch: x86_64
-          - branch: ${{ needs.var.outputs.IPK_BRANCH }}
-            arch: aarch64_cortex-a53
-          - branch: ${{ needs.var.outputs.APK_BRANCH }}
-            arch: aarch64_cortex-a53
     container:
       image: ghcr.io/openwrt/sdk:${{ matrix.arch }}-${{ matrix.branch }}
       options: --user root
@@ -247,7 +176,7 @@ jobs:
         id: prepare
         working-directory: ${{ env.SDKDIR }}
         run: |
-          MKFN=$( ls -1 $PKGDIR/luci-app-zapret*/Makefile )
+          MKFN="$PKGDIR/openwrtzapret/Makefile"
           PKGVER=$( grep -s '^PKG_VERSION:=.*' $MKFN | cut -d'=' -f2 )
           PKGREL=$( grep -s '^PKG_RELEASE:=.*' $MKFN | cut -d'=' -f2 )
           [ "$PKGREL" != "1" ] && PKGVER=$PKGVER-r$PKGREL
@@ -275,7 +204,14 @@ jobs:
         if: steps.init.outputs.status == 'success'
         working-directory: ${{ env.SDKDIR }}
         run: |
+          # Select unified package, not legacy zapret2 / luci-app-zapret2.
+          sed -i '/^CONFIG_PACKAGE_openwrtzapret=/d; /^# CONFIG_PACKAGE_openwrtzapret is not set$/d' .config
+          printf '%s\n' 'CONFIG_PACKAGE_openwrtzapret=m' >> .config
           make defconfig
+          grep -qx 'CONFIG_PACKAGE_openwrtzapret=m' .config || {
+            echo 'ERROR: unified package was not selected by Kconfig' >&2
+            exit 1
+          }
           sed -i 's/CONFIG_LUCI_JSMIN=y/CONFIG_LUCI_JSMIN=n/g' .config
           sed -i 's/CONFIG_LUCI_CSSTIDY=y/CONFIG_LUCI_CSSTIDY=n/g' .config
           grep -q '^CONFIG_LUCI_CSSTIDY=' .config || echo 'CONFIG_LUCI_CSSTIDY=n' >> .config
@@ -286,57 +222,35 @@ jobs:
         run: |
           cat .config || echo "File .config not found"
 
-      - name: Build packages
+      - name: Build unified APK
         id: build
-        if: steps.config.outputs.status == 'success' && env.FAKE_BUILD != 'true'
+        if: steps.config.outputs.status == 'success'
         working-directory: ${{ env.SDKDIR }}
-        env:
-          ARCH_TAG: ${{ matrix.arch }}
         run: |
-          PKGLIST="package/openwrtzapret/zapret2/compile"
-          if [ "$ARCH_TAG" = "$LUCI_ARCH" ]; then
-              PKGLIST="$PKGLIST package/openwrtzapret/luci-app-zapret2/compile"
-          fi
-          MAKE_JOBS=$(nproc)
-          echo "$MAKE_JOBS thread compile"
-          if [ "$MAX_SPEED" != "true" ]; then
-              make $PKGLIST V=sc BUILD_LOG=1
-          else
-              make $PKGLIST -j$MAKE_JOBS
-          fi
-          echo "status=success" >> $GITHUB_OUTPUT
+          set -e
+          make package/openwrtzapret/openwrtzapret/compile -j2 V=sc BUILD_LOG=1
+          echo "status=success" >> "$GITHUB_OUTPUT"
 
-      - name: Build packages (FAKE)
-        id: build_fake
-        if: env.FAKE_BUILD == 'true'
-        working-directory: ${{ env.SDKDIR }}
-        env:
-          ARCH_TAG: ${{ matrix.arch }}
-        run: |
-          OUT_DIR=./bin/packages/dev_x/base
-          mkdir -p $OUT_DIR
-          touch $OUT_DIR/zapret2_$PKGVER-$ARCH_TAG.$PKGTYPE
-          touch $OUT_DIR/luci-app-zapret2_$PKGVER-all.$PKGTYPE
-          echo "status=success" >> $GITHUB_OUTPUT
-
-      - name: Install packages
+      - name: Collect unified APK
         id: install
-        if: steps.build.outputs.status == 'success' || steps.build_fake.outputs.status == 'success'
+        if: steps.build.outputs.status == 'success'
         working-directory: ${{ env.SDKDIR }}
         env:
           ARCH_TAG: ${{ matrix.arch }}
-          SIGN_KEY: ${{ secrets.SIGN_PRIVATE_KEY }}
         run: |
-          find ./bin/packages/*/base -type f ! -regex ".*\(zapret2\).*\.[ai]pk$" -delete
-          #echo ">>>>>>> build a repository index to make the output directory usable as local OPKG source"
-          #ln -s `which usign` staging_dir/host/bin/usign
-          #echo "$SIGN_KEY" | base64 -d > key-build
-          #make package/index
-          OUTDIR=$GITHUB_WORKSPACE/$PKGTYPE-$ARCH_TAG
-          mkdir -p $OUTDIR
-          cp -R ./bin/packages/*/base/. $OUTDIR/
-          echo "OUTDIR=$OUTDIR" >> $GITHUB_ENV
-          echo "status=success" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          OUTDIR="$GITHUB_WORKSPACE/openwrtzapret-apk-$ARCH_TAG"
+          mkdir -p "$OUTDIR"
+          mapfile -d '' packages < <(find ./bin/packages -type f -name 'openwrtzapret-*.apk' -print0)
+          if [ "${#packages[@]}" -ne 1 ]; then
+            echo "Expected exactly one unified APK; found ${#packages[@]}" >&2
+            printf '%s\n' "${packages[@]}" >&2
+            exit 1
+          fi
+          cp -- "${packages[0]}" "$OUTDIR/"
+          ( cd "$OUTDIR" && sha256sum ./*.apk > SHA256SUMS )
+          echo "OUTDIR=$OUTDIR" >> "$GITHUB_ENV"
+          echo "status=success" >> "$GITHUB_OUTPUT"
 
       - name: Compress build logs
         if: always()
@@ -349,10 +263,10 @@ jobs:
 
       - name: Upload packages
         if: steps.install.outcome == 'success'
-        uses: actions/upload-artifact@main
+        uses: actions/upload-artifact@v4
         with:
           path: ${{ env.OUTDIR }}
-          name: zapret,${{ env.PKGTYPE }},${{ matrix.arch }}
+          name: openwrtzapret-apk-${{ matrix.arch }}
           if-no-files-found: error
 
       - name: Upload build logs
