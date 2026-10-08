@@ -73,11 +73,16 @@
 .owz-service-page .owz-art-actions .cbi-value {margin:.8rem 0!important;border:0!important;}
 .owz-service-page .owz-art-actions .cbi-value-title {min-width:185px;}
 .owz-service-page .owz-art-actions button {border:1px solid #9166b5!important;box-shadow:3px 3px 0 #503a5f!important;margin:0 5px 5px 0;}
+.owz-service-page .owz-diagnostics-command {display:inline-flex;align-items:center;flex-wrap:wrap;gap:.8rem;padding:.65rem .85rem;border:1px solid #75578e;background:rgba(101,77,120,.12);}
+.owz-service-page .owz-diagnostics-prompt {color:#ba8edc;font:12px/1.5 Consolas,monospace;white-space:nowrap;}
+.owz-service-page .owz-diagnostics-command button {margin:0!important;}
+.owz-service-page .owz-diagnostics-command:hover {border-color:#ad80d2;background:rgba(101,77,120,.2);}
 .owz-service-page pre.owz-service-footline {margin:1.5rem 0 0!important;color:#654d78;font-size:11px;}
 .owz-service-page .owz-service-sources-bay {padding:1rem 0;border-top:2px dotted #61516d;min-width:0;}
 .owz-service-page .owz-service-sources-bay h3::before {content:" / ";color:var(--owz-sym);}
-.owz-service-page .owz-art-sources {overflow-wrap:anywhere;font:12px/1.85 Consolas,monospace;}
-.owz-service-page .owz-art-sources div {border-bottom:1px dashed #39303e;padding:.35rem 0;}
+.owz-service-page .owz-project-link {display:inline-flex;align-items:center;flex-wrap:wrap;gap:.7rem;max-width:100%;padding:.7rem .9rem;border:1px solid #73568d;background:rgba(101,77,120,.1);font:12px/1.5 Consolas,monospace;overflow-wrap:anywhere;text-decoration:none;}
+.owz-service-page .owz-project-link:hover {border-color:#b78ed9;background:rgba(101,77,120,.2);text-decoration:none;}
+.owz-service-page .owz-project-mark {color:#c994f0;}
 
 /* STRATEGIES — branching tracks touch live selectors, status indicators, buttons and results. */
 .owz-strategies-page .owz-top-layout {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2rem;align-items:stretch;width:100%;margin-bottom:2.25rem;}
@@ -119,9 +124,9 @@
 .owz-import-page .cbi-value-title::before {content:"[+] ";color:var(--owz-sym);}
 .owz-import-page .cbi-value-field {flex:1;min-width:0;}
 .owz-import-page textarea {width:100%!important;max-width:none!important;min-height:clamp(320px,45vh,650px)!important;background:#131115!important;border:1px solid #775b90!important;border-left:3px solid #9474b1!important;}
-.owz-import-page .cbi-page-actions {border-top:2px solid #815f98!important;padding:1.1rem 0 .7rem!important;}
+.owz-import-page .cbi-page-actions {display:flex!important;align-items:center;justify-content:flex-start!important;gap:.5rem;text-align:left!important;border-top:2px solid #815f98!important;padding:1.1rem 0 .7rem!important;}
 .owz-import-page .cbi-page-actions::before {content:"==> ";color:var(--owz-sym);}
-.owz-import-page .cbi-page-actions .btn {border:1px solid #a573d4!important;box-shadow:3px 3px 0 #493352!important;}
+.owz-import-page .cbi-page-actions .btn {float:none!important;margin:0!important;border:1px solid #a573d4!important;box-shadow:3px 3px 0 #493352!important;}
 .owz-import-page .owz-import-lists-note {border-left:3px solid #694c83!important;padding:.9rem 1.2rem!important;margin:0!important;max-width:none;}
 .owz-import-page .owz-import-lists-note::before {content:"|__ ";display:inline;color:#bd8cf0;}
 

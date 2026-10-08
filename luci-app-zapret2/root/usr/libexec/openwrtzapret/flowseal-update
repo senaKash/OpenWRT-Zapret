@@ -25,6 +25,13 @@ fail_json() {
 	printf '{"ok":false,"mode":"flowseal_update","stage":"%s","error":"%s"}\n' "$stage" "$code"
 }
 
+progress_write() {
+	local jobdir="$1" stage="$2" current="$3" total="$4" job tmp
+	job=${jobdir##*/}; tmp="$jobdir/progress.json.tmp.$$"
+	printf '{"ok":true,"job_id":"%s","mode":"flowseal_update","status":"RUNNING","stage":"%s","profile_id":null,"current":%s,"total":%s,"error":null}\n' \
+		"$job" "$stage" "$current" "$total" > "$tmp" && mv -f "$tmp" "$jobdir/progress.json"
+}
+
 normalize_asset_tree() {
 	local root="$1"
 	[ -d "$root" ] && [ ! -L "$root" ] || return 1
@@ -477,7 +484,7 @@ install_staged() {
 }
 
 run_update() {
-	local jobdir="$1" tmp api remote rc archive url size archive_hash extract root profiles assets manifest old lockmap batfile stem key locked_id
+	local jobdir="$1" tmp api remote rc archive url size archive_hash extract root profiles assets manifest old lockmap batfile stem key locked_id current=0 total
 	case "$jobdir" in /etc/openwrtzapret/state/jobs/[0-9]*-[0-9]*) :;; *) fail_json invalid_job_dir validation; return 0;; esac
 	[ -d "$jobdir" ] && [ ! -L "$jobdir" ] || { fail_json invalid_job_dir validation; return 0; }
 	tmp=$(mktemp -d /tmp/openwrtzapret-flowseal-update.XXXXXX) || { fail_json temp_failed prepare; return 0; }
@@ -485,18 +492,23 @@ run_update() {
 	# выполнить dry-run по staging assets без их второй копии.
 	chmod 755 "$tmp" || { rm -rf "$tmp"; fail_json temp_failed prepare; return 0; }
 	trap "rm -rf '$tmp'" EXIT INT TERM
+	progress_write "$jobdir" checking 0 0 || { fail_json progress_failed prepare > "$jobdir/result.json"; return 1; }
 	api="$tmp/api.json"; remote=$(fetch_latest "$api"); rc=$?
 	if [ "$rc" -ne 0 ]; then fail_json remote_check_failed check > "$jobdir/result.json"; return 1; fi
 	[ ! -e "$jobdir/cancel" ] || { printf '{"ok":true,"mode":"flowseal_update","status":"CANCELLED","source_version":"%s"}\n' "$remote" > "$jobdir/result.json"; return 130; }
 	archive="$tmp/release.tar.gz"
 	url="$RELEASE_BASE/$remote/zapret-discord-youtube-$remote.tar.gz"
+	progress_write "$jobdir" downloading 0 0 || { fail_json progress_failed download > "$jobdir/result.json"; return 1; }
 	curl -fsSL --connect-timeout 10 --max-time 180 --retry 2 -H 'User-Agent: OpenWRTZapret' -o "$archive" "$url" || { fail_json release_download_failed download > "$jobdir/result.json"; return 1; }
 	size=$(wc -c < "$archive" 2>/dev/null) || size=$((MAX_ARCHIVE+1)); [ "$size" -le "$MAX_ARCHIVE" ] || { fail_json archive_too_large validation > "$jobdir/result.json"; return 1; }
 	archive_hash=$(sha256sum "$archive" 2>/dev/null); archive_hash=${archive_hash%% *}; case "$archive_hash" in *[!0-9a-f]*) fail_json hash_failed validation > "$jobdir/result.json"; return 1;; esac
 	[ ! -e "$jobdir/cancel" ] || { printf '{"ok":true,"mode":"flowseal_update","status":"CANCELLED","source_version":"%s"}\n' "$remote" > "$jobdir/result.json"; return 130; }
+	progress_write "$jobdir" extracting 0 0 || { fail_json progress_failed extract > "$jobdir/result.json"; return 1; }
 	extract="$tmp/extract"; mkdir -p "$extract"
 	extract_selected "$archive" "$extract" "$tmp/members" "$tmp/selected" || { fail_json unsafe_or_invalid_archive extract > "$jobdir/result.json"; return 1; }
 	root=$(find_release_root "$extract" "$tmp/bats") || { fail_json invalid_release_layout extract > "$jobdir/result.json"; return 1; }
+	total=$(awk 'NF{n++} END{print n+0}' "$tmp/bats")
+	progress_write "$jobdir" processing "$current" "$total" || { fail_json progress_failed import > "$jobdir/result.json"; return 1; }
 	profiles="$tmp/profiles"; assets="$tmp/assets"; mkdir -p "$profiles" "$assets" || { fail_json temp_failed prepare > "$jobdir/result.json"; return 1; }
 	chmod 700 "$profiles" || { fail_json temp_failed prepare > "$jobdir/result.json"; return 1; }
 	chmod 755 "$assets" || { fail_json temp_failed prepare > "$jobdir/result.json"; return 1; }
@@ -506,14 +518,18 @@ run_update() {
 		[ ! -e "$jobdir/cancel" ] || { printf '{"ok":true,"mode":"flowseal_update","status":"CANCELLED","source_version":"%s"}\n' "$remote" > "$jobdir/result.json"; return 130; }
 		batfile=${bat##*/}; stem=${batfile%.[bB][aA][tT]}; key=$(slugify "$stem"); [ -n "$key" ] || key=strategy
 		locked_id=$(locked_id_for_key "$lockmap" "$key" 2>/dev/null) || locked_id=''
-		[ -n "$locked_id" ] && continue
-		import_one "$bat" "$remote" "$root" "$profiles" "$assets" "$manifest" "$key" || { fail_json import_failed import > "$jobdir/result.json"; return 1; }
+		if [ -z "$locked_id" ]; then
+			import_one "$bat" "$remote" "$root" "$profiles" "$assets" "$manifest" "$key" || { fail_json import_failed import > "$jobdir/result.json"; return 1; }
+		fi
+		current=$((current + 1))
+		progress_write "$jobdir" processing "$current" "$total" || { fail_json progress_failed import > "$jobdir/result.json"; return 1; }
 	done < "$tmp/bats"
 	preserve_locked_profiles "$remote" "$profiles" "$assets" "$manifest" "$lockmap" "$tmp" || { fail_json locked_profile_preserve_failed import > "$jobdir/result.json"; return 1; }
 	old="$STATE_ROOT/manifest.tsv"; [ -r "$old" ] || old="$tmp/empty"; : > "$tmp/empty"
 	make_diff "$manifest" "$old" "$tmp/diff.tsv" || { fail_json diff_failed import > "$jobdir/result.json"; return 1; }
 	make_report "$remote" "$archive_hash" "$tmp/diff.tsv" "$tmp/report.json" || { fail_json report_failed import > "$jobdir/result.json"; return 1; }
 	[ ! -e "$jobdir/cancel" ] || { printf '{"ok":true,"mode":"flowseal_update","status":"CANCELLED","source_version":"%s"}\n' "$remote" > "$jobdir/result.json"; return 130; }
+	progress_write "$jobdir" saving "$current" "$total" || { fail_json progress_failed install > "$jobdir/result.json"; return 1; }
 	install_staged "$remote" "$profiles" "$assets" "$manifest" "$tmp/report.json" "$jobdir" "$archive_hash" || { fail_json install_failed install > "$jobdir/result.json"; return 1; }
 	# Job result wraps the persistent diff report without changing active_profile or /opt/zapret2/config.
 	printf '{"ok":true,"mode":"flowseal_update","status":"DONE","source_version":"%s","report":' "$remote" > "$jobdir/result.json.tmp.$$"
@@ -526,7 +542,7 @@ run_update() {
 case "${1:-}" in
 	status) [ "$#" -eq 1 ] && status_json || exit 64;;
 	check) [ "$#" -eq 1 ] && check_json || exit 64;;
-	run) [ "$#" -eq 2 ] && run_update "$2" || exit 64;;
+	run) [ "$#" -eq 2 ] || exit 64; run_update "$2"; exit $?;;
 	import-user) [ "$#" -eq 2 ] && import_user "$2" || exit 64;;
 	*) exit 64;;
 esac

@@ -313,7 +313,7 @@ return view.extend({
             else {
                 this.activeJob = result.job_id;
                 this.testing = true;
-                this.showJob({ job_id: result.job_id, mode: 'flowseal_update', status: result.status || 'PENDING', current: 0, total: 1, stage: 'queued' });
+                this.showJob({ job_id: result.job_id, mode: 'flowseal_update', status: result.status || 'PENDING', current: 0, total: 0, stage: 'queued' });
             }
         }
         catch (e) {
@@ -394,19 +394,39 @@ return view.extend({
             ? ' · ' + (this.profilesLoaded && this.profiles.length > total
                 ? _('%d of %d strategies compatible').format(total, this.profiles.length)
                 : _('compatible strategies only')) : '';
-        let complete = data.status == 'DONE' && current >= total;
-        let percent = total > 0 ? Math.max(0, Math.min(100, Math.round(current * 100 / total))) : 0;
-        if (!complete) percent = Math.min(percent, 99);
-        let filled = Math.floor(percent * 24 / 100);
-        this.jobProgress.textContent = '[' + '#'.repeat(filled) + '.'.repeat(24 - filled) + ']';
-        this.jobProgress.setAttribute('aria-valuenow', percent);
-        this.jobPercent.textContent = percent + '%';
+        let updateJob = data.mode == 'flowseal_update';
+        let knownProgress = !updateJob || total > 0;
+        let complete = data.status == 'DONE' && current >= total && knownProgress;
+        if (knownProgress) {
+            let percent = total > 0 ? Math.max(0, Math.min(100, Math.round(current * 100 / total))) : 0;
+            if (!complete) percent = Math.min(percent, 99);
+            let filled = Math.floor(percent * 24 / 100);
+            this.jobProgress.textContent = '[' + '#'.repeat(filled) + '.'.repeat(24 - filled) + ']';
+            this.jobProgress.setAttribute('aria-valuenow', percent);
+            this.jobPercent.textContent = percent + '%';
+        }
+        else {
+            let frame = data.status == 'RUNNING' || data.status == 'PENDING'
+                ? ['|', '/', '-', '\\'][(this.updateSpinnerFrame = ((this.updateSpinnerFrame || 0) + 1) % 4)] : '.';
+            this.jobProgress.textContent = '[' + '.'.repeat(11) + frame + '.'.repeat(12) + ']';
+            this.jobProgress.removeAttribute('aria-valuenow');
+            this.jobPercent.textContent = '';
+        }
         this.jobProgressRow.hidden = false;
         this.cancelButton.hidden = this.isTerminal(data.status);
-        if (data.mode == 'flowseal_update') {
+        if (updateJob) {
             if (data.status == 'PENDING') this.jobText.textContent = _('Strategy update queued');
-            else if (data.status == 'RUNNING') this.jobText.textContent = _('Updating zapret-discord-youtube strategies…');
-            else this.jobText.textContent = _('Strategy update: %s').format(data.status || 'UNKNOWN');
+            else if (data.status == 'RUNNING' && data.stage == 'checking') this.jobText.textContent = _('Checking strategy release…');
+            else if (data.status == 'RUNNING' && data.stage == 'downloading') this.jobText.textContent = _('Downloading strategy archive…');
+            else if (data.status == 'RUNNING' && data.stage == 'extracting') this.jobText.textContent = _('Extracting strategy archive…');
+            else if (data.status == 'RUNNING' && data.stage == 'processing')
+                this.jobText.textContent = _('Processing strategies %d / %d').format(current, total);
+            else if (data.status == 'RUNNING' && data.stage == 'saving')
+                this.jobText.textContent = _('Saving strategies…') + ' ' + current + ' / ' + total;
+            else if (data.status == 'DONE')
+                this.jobText.textContent = _('Strategy update complete') + ' · ' + current + ' / ' + total;
+            else this.jobText.textContent = _('Strategy update: %s').format(data.status || 'UNKNOWN') +
+                (data.stage ? ' [' + data.stage + ']' : '') + (data.error ? ' · ' + data.error : '');
         }
         else if (data.status == 'RUNNING' && data.stage == 'testing')
             this.jobText.textContent = _('Completed %d / %d').format(current, total) +

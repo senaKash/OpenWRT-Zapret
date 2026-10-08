@@ -84,11 +84,11 @@ return view.extend({
         }, _('Add'));
         return E('div', { 'class': 'owz-theme owz-import-page' }, [
             E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }),
-            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/terminal-art.css') + '?v=2' }),
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/terminal-art.css') + '?v=3' }),
             E('div', { 'class': 'owz-import-full-grid' }, [
                 E('aside', { 'class': 'owz-import-art-rail', 'aria-hidden': 'true' }, [
                     E('pre', { 'class': 'owz-art owz-import-diskette' }, " .-----------------.\n |  .----------.  |\n |  | 3.5 BAT  |  |\n |  '----------'  |\n |   __________   |\n |  |__________|  |\n '-----------------'"),
-                    E('pre', { 'class': 'owz-art owz-import-route' }, '       |\n       v\n  [ INPUT ]\n       |\n       v\n  [ IMPORT ]')
+                    E('pre', { 'class': 'owz-art owz-import-route' }, '         |\n         v\n  +-------------+\n  | BAT  INPUT  |\n  +------+------+\n         |\n         v\n  +-------------+\n  |   CONVERT   |\n  +------+------+\n         |\n         v\n  [ JSON PROFILE ]')
                 ]),
                 E('div', { 'class': 'owz-import-editor-area' }, [
             E('h2', _('Import Strategy')),

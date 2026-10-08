@@ -363,7 +363,6 @@ return view.extend({
 
         let btn_diag        = create_btn('btn_diag',  btn_style_action, _('Diagnostics'));
         btn_diag.onclick    = ui.createHandlerFn(this, () => { diagnost.openDiagnostDialog(this.pkg_arch) });
-        layout_append('Diagnostic tools', null, [ btn_diag ] );
 
         let elems = {
             "status": status_string,
@@ -393,12 +392,9 @@ return view.extend({
             aux2 = E('div', { }, '&nbsp');
         }
         
-        let url1 = 'https://github.com/bol-van/'+tools.appName;
-        let url2 = 'https://github.com/remittor/zapret-openwrt';
-
         return E('div', { 'class': 'owz-theme owz-service-page owz-art-shell' }, [
             E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }),
-            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/terminal-art.css') + '?v=2' }),
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/terminal-art.css') + '?v=3' }),
             E('div', { 'class': 'owz-service-titleline' }, [
                 E('h2', _('Diagnostics & Tools')),
                 E('span', { 'class': 'owz-tty-version' }, page_title.replace(' &nbsp ', '  '))
@@ -419,14 +415,26 @@ return view.extend({
             E('div', { 'class': 'owz-service-bottom' }, [
                 E('section', { 'class': 'owz-service-actions-bay' }, [
                     E('h3', _('Diagnostic tools')),
-                    E('div', { 'class': 'owz-art-actions' }, layout),
+                    E('div', { 'class': 'owz-art-actions' }, [
+                        ...(!cfg.active_profile ? [ layout ] : []),
+                        E('div', { 'class': 'owz-diagnostics-command' }, [
+                            E('span', { 'class': 'owz-diagnostics-prompt', 'aria-hidden': 'true' }, 'C:\\ZAPRET2>'),
+                            btn_diag
+                        ])
+                    ]),
                     E('pre', { 'class': 'owz-art owz-service-footline', 'aria-hidden': 'true' }, ' /======================================/\n/______________________________________/')
                 ]),
                 E('section', { 'class': 'owz-service-sources-bay' }, [
-                    E('h3', _('Sources')),
-                    E('div', { 'class': 'owz-art-sources' }, [
-                        E('div', {}, [ '+-- ', E('a', { 'href': url1, 'target': '_blank', 'rel': 'noopener noreferrer' }, url1) ]),
-                        E('div', {}, [ '\\-- ', E('a', { 'href': url2, 'target': '_blank', 'rel': 'noopener noreferrer' }, url2) ])
+                    E('h3', _('Source')),
+                    E('a', {
+                        'class': 'owz-project-link',
+                        'href': 'https://github.com/senaKash/OpenWRT-Zapret',
+                        'target': '_blank',
+                        'rel': 'noopener noreferrer'
+                    }, [
+                        E('span', { 'class': 'owz-project-mark', 'aria-hidden': 'true' }, '[ GIT ]'),
+                        E('span', {}, 'senaKash/OpenWRT-Zapret'),
+                        E('span', { 'aria-hidden': 'true' }, '↗')
                     ])
                 ])
             ])
