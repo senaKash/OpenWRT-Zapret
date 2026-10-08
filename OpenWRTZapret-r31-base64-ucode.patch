@@ -1,0 +1,50 @@
+--- a/luci-app-zapret2/Makefile
++++ b/luci-app-zapret2/Makefile
+@@ -6,12 +6,12 @@
+ 
+ PKG_NAME:=luci-app-zapret2
+ PKG_VERSION:=0.9.20260307
+-PKG_RELEASE:=30
++PKG_RELEASE:=31
+ PKG_LICENSE:=MIT
+ PKG_MAINTAINER:=OpenWRTZapret contributors
+ 
+ LUCI_TITLE:=OpenWRTZapret LuCI interface for Zapret2
+-LUCI_DEPENDS:=+zapret2 +rpcd-mod-ucode +jsonfilter +coreutils-sha256sum +curl
++LUCI_DEPENDS:=+zapret2 +rpcd-mod-ucode +ucode +jsonfilter +coreutils-sha256sum +curl
+ LUCI_PKGARCH:=all
+ 
+ define Package/$(PKG_NAME)/postinst
+--- a/luci-app-zapret2/root/usr/libexec/openwrtzapret/service
++++ b/luci-app-zapret2/root/usr/libexec/openwrtzapret/service
+@@ -423,6 +423,12 @@
+ 	fi
+ }
+ 
++# LuCI already uses ucode; unlike BusyBox base64, b64dec() is always available here.
++# Invalid Base64 must fail, so callers keep their existing invalid_data handling.
++owz_base64_decode() {
++	ucode -e 'import { stdin } from "fs"; let value = b64dec(stdin.read("all")); if (value == null) exit(1); print(value);'
++}
++
+ owz_list_put() {
+ 	local name="$1" data="$2" target tmp source
+ 	target=$(owz_list_target "$name") || { printf '%s\n' '{"ok":false,"error":"invalid_list"}'; return 0; }
+@@ -430,7 +436,7 @@
+ 	if ! owz_lock list_put; then printf '%s\n' '{"ok":false,"error":"busy"}'; return 0; fi
+ 	owz_list_paths_ready "$target" || { printf '%s\n' '{"ok":false,"error":"list_unavailable"}'; return 0; }
+ 	tmp=$(mktemp /tmp/openwrtzapret-list.XXXXXX) || { printf '%s\n' '{"ok":false,"error":"temporary_file_failed"}'; return 0; }
+-	if [ "$data" = - ]; then : > "$tmp"; else printf '%s' "$data" | /bin/busybox base64 -d > "$tmp" 2>/dev/null; fi
++	if [ "$data" = - ]; then : > "$tmp"; else printf '%s' "$data" | owz_base64_decode > "$tmp" 2>/dev/null; fi
+ 	if [ "$?" -ne 0 ] || [ "$(wc -c < "$tmp")" -gt 49152 ] ||
+ 		! LC_ALL=C tr -d '\000' < "$tmp" | cmp -s - "$tmp"; then
+ 		rm -f "$tmp"
+@@ -784,7 +790,7 @@
+ 	if ! owz_lock profile_import_user; then printf '%s\n' '{"ok":false,"error":"busy"}'; return 0; fi
+ 	tmp=$(mktemp /tmp/openwrtzapret-user-import.XXXXXX) || { printf '%s\n' '{"ok":false,"error":"temp_failed"}'; return 0; }
+ 	chmod 600 "$tmp"
+-	if ! printf '%s' "$data" | /bin/busybox base64 -d > "$tmp" 2>/dev/null; then rm -f "$tmp"; printf '%s\n' '{"ok":false,"error":"invalid_strategy_encoding"}'; return 0; fi
++	if ! printf '%s' "$data" | owz_base64_decode > "$tmp" 2>/dev/null; then rm -f "$tmp"; printf '%s\n' '{"ok":false,"error":"invalid_strategy_encoding"}'; return 0; fi
+ 	[ "$(wc -c < "$tmp" 2>/dev/null)" -le 32768 ] || { rm -f "$tmp"; printf '%s\n' '{"ok":false,"error":"strategy_too_large"}'; return 0; }
+ 	out=$("$OWZ_FLOWSEAL_UPDATE" import-user "$tmp" 2>/dev/null)
+ 	rm -f "$tmp"
