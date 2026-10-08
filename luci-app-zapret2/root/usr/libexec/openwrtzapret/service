@@ -707,6 +707,30 @@ owz_job_state_write() {
 		"$job" "$mode" "$status" "$stage" "$profile_id" "$current" "$total" "$error" > "$tmp" && mv -f "$tmp" "$dir/state.json"
 }
 
+owz_job_state_read() {
+	local dir="$1" state
+	state=$(owz_json_file "$dir/state.json") || return 1
+	case "$state" in
+		*'"mode":"flowseal_update","status":"RUNNING"'*)
+			if [ -r "$dir/progress.json" ]; then
+				owz_json_file "$dir/progress.json" && return 0
+			fi
+			;;
+	esac
+	printf '%s\n' "$state"
+}
+
+owz_job_progress_counts() {
+	local dir="$1" current total
+	OWZ_PROGRESS_CURRENT=0 OWZ_PROGRESS_TOTAL=0
+	[ -r "$dir/progress.json" ] && [ ! -L "$dir/progress.json" ] || return 0
+	current=$(jsonfilter -i "$dir/progress.json" -e '@.current' 2>/dev/null) || return 0
+	total=$(jsonfilter -i "$dir/progress.json" -e '@.total' 2>/dev/null) || return 0
+	case "$current$total" in ''|*[!0-9]*) return 0;; esac
+	[ "$total" -gt 0 ] && [ "$current" -le "$total" ] || return 0
+	OWZ_PROGRESS_CURRENT=$current OWZ_PROGRESS_TOTAL=$total
+}
+
 owz_job_meta_get() {
 	local file="$1" key="$2"
 	sed -n "s/^${key}=//p" "$file" 2>/dev/null | tail -n 1
@@ -1057,7 +1081,7 @@ owz_job_prepare() {
 		flowseal_update)
 			[ -x "$OWZ_FLOWSEAL_UPDATE" ] || { printf '%s
 ' '{"ok":false,"error":"flowseal_updater_missing"}'; return 0; }
-			profiles=''; total=1
+			profiles=''; total=0
 			;;
 		profile|all)
 			[ -z "$(uci -q changes zapret2 2>/dev/null)" ] || { printf '%s
@@ -1136,7 +1160,7 @@ worker_pid=0
 }
 
 owz_job_run() {
-	local job="$1" dir mode total index=0 completed=0 id rc final=DONE final_error=''
+	local job="$1" dir mode total index=0 completed=0 id rc final=DONE final_error='' final_stage=complete reported
 	owz_valid_job_id "$job" || exit 64
 	dir="$OWZ_JOB_ROOT/$job"; [ -d "$dir" ] && [ ! -L "$dir" ] || exit 66
 	if ! owz_lock job_run; then exit 75; fi
@@ -1145,16 +1169,25 @@ owz_job_run() {
 	owz_job_meta_set_pid "$dir/meta" "$$" || :
 
 	if [ "$mode" = flowseal_update ]; then
-		owz_job_state_write "$dir" "$job" "$mode" RUNNING updating '' 0 1 ''
+		owz_job_state_write "$dir" "$job" "$mode" RUNNING checking '' 0 0 ''
 		"$OWZ_FLOWSEAL_UPDATE" run "$dir"; rc=$?
+		owz_job_progress_counts "$dir"
+		index=$OWZ_PROGRESS_CURRENT; total=$OWZ_PROGRESS_TOTAL
 		case "$rc" in
-			0) final=DONE; final_error=''; index=1;;
-			130) final=CANCELLED; final_error=cancelled; index=0;;
-			*) final=ERROR; final_error=flowseal_update_failed; index=0;;
+			0) if [ "$total" -gt 0 ] && [ "$index" -eq "$total" ]; then final=DONE
+			   else final=ERROR; final_error=incomplete_progress; fi;;
+			130) final=CANCELLED; final_error=cancelled;;
+			*) final=ERROR; final_error=flowseal_update_failed;;
 		esac
+		if [ "$final" = ERROR ] && [ -r "$dir/result.json" ]; then
+			reported=$(jsonfilter -i "$dir/result.json" -e '@.stage' 2>/dev/null) || reported=''
+			case "$reported" in ''|*[!a-z0-9_]*) :;; *) final_stage=$reported;; esac
+			reported=$(jsonfilter -i "$dir/result.json" -e '@.error' 2>/dev/null) || reported=''
+			case "$reported" in ''|*[!a-z0-9_]*) :;; *) final_error=$reported;; esac
+		fi
 		[ -r "$dir/result.json" ] || printf '{"ok":false,"mode":"flowseal_update","status":"%s","error":"%s"}
 ' "$final" "$final_error" > "$dir/result.json"
-		owz_job_state_write "$dir" "$job" "$mode" "$final" complete '' "$index" 1 "$final_error"
+		owz_job_state_write "$dir" "$job" "$mode" "$final" "$final_stage" '' "$index" "$total" "$final_error"
 		[ "$(owz_job_active_id 2>/dev/null)" = "$job" ] && rm -f "$OWZ_JOURNAL/active"
 		return 0
 	fi
@@ -1207,7 +1240,8 @@ owz_job_recover() {
 		# installs are atomic per file, so interrupted work only needs the journal cleared.
 		[ -r "$dir/result.json" ] || printf '%s
 ' '{"ok":true,"mode":"flowseal_update","status":"RECOVERED","error":"worker_lost"}' > "$dir/result.json"
-		owz_job_state_write "$dir" "$job" "$mode" RECOVERED recovered '' 0 1 worker_lost
+		owz_job_progress_counts "$dir"
+		owz_job_state_write "$dir" "$job" "$mode" RECOVERED recovered '' "$OWZ_PROGRESS_CURRENT" "$OWZ_PROGRESS_TOTAL" worker_lost
 		[ "$(owz_job_active_id 2>/dev/null)" = "$job" ] && rm -f "$OWZ_JOURNAL/active"
 		printf '{"ok":true,"job_id":"%s","status":"RECOVERED"}
 ' "$job"
@@ -1240,14 +1274,14 @@ owz_job_current() {
 	if ! job=$(owz_job_active_id); then printf '%s\n' '{"ok":false,"error":"invalid_recovery_journal"}'; return 0; fi
 	dir="$OWZ_JOB_ROOT/$job"
 	[ -r "$dir/state.json" ] || { printf '{"ok":true,"job_id":"%s","status":"PENDING"}\n' "$job"; return 0; }
-	owz_json_file "$dir/state.json" || printf '%s\n' '{"ok":false,"error":"invalid_job_state"}'
+	owz_job_state_read "$dir" || printf '%s\n' '{"ok":false,"error":"invalid_job_state"}'
 }
 
 owz_job_status() {
 	local job="$1" dir
 	owz_valid_job_id "$job" || exit 64
 	dir="$OWZ_JOB_ROOT/$job"; [ -r "$dir/state.json" ] || { printf '%s\n' '{"ok":false,"error":"job_not_found"}'; return 0; }
-	owz_json_file "$dir/state.json" || printf '%s\n' '{"ok":false,"error":"invalid_job_state"}'
+	owz_job_state_read "$dir" || printf '%s\n' '{"ok":false,"error":"invalid_job_state"}'
 }
 
 owz_job_result() {

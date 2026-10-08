@@ -16,7 +16,8 @@ function E(tag, attrs, content) {
         tag, attrs: attrs || {}, children,
         appendChild(child) { this.children.push(child); },
         replaceChildren(...items) { this.children = items; },
-        setAttribute(name, value) { this.attrs[name] = value; }
+        setAttribute(name, value) { this.attrs[name] = value; },
+        removeAttribute(name) { delete this.attrs[name]; }
     };
 }
 function find(node, tag) {
@@ -55,7 +56,8 @@ const dom = page.render([{}, {
 }]);
 const table = find(dom, 'table')[0];
 const topLayout = find(dom, 'div').find(node => node.attrs.class === 'owz-top-layout');
-assert.equal(dom.children[0], topLayout);
+const testsSection = find(dom, 'div').find(node => node.attrs.class === 'cbi-section owz-tests-section');
+assert.equal(dom.children.includes(topLayout), true);
 assert.equal(topLayout.children[0].attrs.class, 'owz-top-column');
 assert.equal(topLayout.children[1].attrs.class, 'owz-top-column');
 assert.equal(topLayout.children[0].children[0].attrs.class, 'cbi-section owz-control-section');
@@ -66,10 +68,10 @@ assert.equal(find(topLayout.children[1], 'a')[0].attrs.class.includes('cbi-butto
 assert.equal(find(topLayout.children[1], 'button')[0].children[0], 'Update Strategies');
 assert.equal(find(topLayout.children[1], 'span').some(node => node.children[0] === '?' && node.attrs.title.includes('zapret-discord-youtube')), true);
 assert.equal(find(topLayout.children[0], 'span').some(node => node.children[0] === '$'), true);
-assert.equal(find(dom.children[1], 'table')[0], table);
-assert.equal(find(dom.children[1], 'h2')[0].children[0], 'Strategies');
-assert.equal(find(dom.children[1], 'span').some(node => node.children[0] === '?' && node.attrs.title.includes('Lock protects')), true);
-assert.equal(find(dom.children[1], 'button')[0].children[0], 'Test All');
+assert.equal(find(testsSection, 'table')[0], table);
+assert.equal(find(testsSection, 'h2')[0].children[0], 'Strategies');
+assert.equal(find(testsSection, 'span').some(node => node.children[0] === '?' && node.attrs.title.includes('Lock protects')), true);
+assert.equal(find(testsSection, 'button')[0].children[0], 'Test All');
 const headers = find(find(table, 'thead')[0], 'th');
 assert.deepEqual(headers.map(header => header.children[0]),
     ['#', 'Lock', 'Strategy', 'Result', 'YouTube', 'Discord', 'Cloudflare', 'GitHub', 'Tested', 'Del']);
@@ -179,4 +181,33 @@ assert.equal(page.jobText.textContent.includes('Completed 0 / 2'), true);
 page.showJob({ job_id: '2-3', mode: 'all', status: 'RUNNING', stage: 'result', profile_id: profile.id, current: 1, total: 2 });
 assert.equal(page.jobPercent.textContent, '50%');
 assert.equal(page.resultRows[profile.id].row.className, '');
+const update = (status, stage, current, total, error) =>
+    page.showJob({ job_id: '3-4', mode: 'flowseal_update', status, stage, current, total, error });
+update('RUNNING', 'downloading', 0, 0);
+const firstFrame = page.jobProgress.textContent;
+assert.equal(page.jobPercent.textContent, '');
+assert.equal(page.jobProgress.attrs['aria-valuenow'], undefined);
+assert.match(page.jobText.textContent, /Downloading strategy archive/);
+update('RUNNING', 'downloading', 0, 0);
+assert.notEqual(page.jobProgress.textContent, firstFrame);
+update('RUNNING', 'processing', 0, 22);
+assert.equal(page.jobPercent.textContent, '0%');
+update('RUNNING', 'processing', 1, 22);
+assert.equal(page.jobPercent.textContent, '5%');
+assert.match(page.jobText.textContent, /1 \/ 22/);
+update('RUNNING', 'processing', 20, 22);
+assert.equal(page.jobPercent.textContent, '91%');
+update('RUNNING', 'processing', 22, 22);
+assert.equal(page.jobPercent.textContent, '99%');
+update('RUNNING', 'saving', 22, 22);
+assert.equal(page.jobPercent.textContent, '99%');
+assert.match(page.jobText.textContent, /Saving strategies/);
+update('DONE', 'complete', 22, 22);
+assert.equal(page.jobPercent.textContent, '100%');
+update('CANCELLED', 'complete', 5, 22);
+assert.equal(page.jobPercent.textContent, '23%');
+assert.equal(page.cancelButton.hidden, true);
+update('ERROR', 'download', 0, 0, 'release_download_failed');
+assert.equal(page.jobPercent.textContent, '');
+assert.match(page.jobText.textContent, /release_download_failed/);
 console.log('Strategies result compatibility and table headers passed');
