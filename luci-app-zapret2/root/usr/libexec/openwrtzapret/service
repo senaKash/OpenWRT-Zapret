@@ -381,8 +381,27 @@ owz_list_source() {
 	fi
 }
 
+owz_lists_pending() {
+	[ -e "$OWZ_DATA/lists.pending" ]
+}
+
+owz_lists_mark_pending() {
+	[ ! -L "$OWZ_DATA" ] || return 1
+	mkdir -p "$OWZ_DATA" || return 1
+	[ ! -L "$OWZ_DATA/lists.pending" ] || return 1
+	: > "$OWZ_DATA/lists.pending" && chmod 600 "$OWZ_DATA/lists.pending"
+}
+
+owz_lists_clear_pending() {
+	[ ! -e "$OWZ_DATA/lists.pending" ] || {
+		[ -f "$OWZ_DATA/lists.pending" ] && [ ! -L "$OWZ_DATA/lists.pending" ] || return 1
+		rm -f "$OWZ_DATA/lists.pending"
+	}
+}
+
 owz_lists_status() {
-	local name target first=true source
+	local name target first=true source pending=false
+	owz_lists_pending && pending=true
 	printf '{"ok":true,"lists":['
 	for name in list-google.txt list-general-user.txt list-exclude-user.txt ipset-exclude.txt; do
 		target=$(owz_list_target "$name")
@@ -391,7 +410,7 @@ owz_lists_status() {
 		printf '{"name":"%s","target":"%s","source":"%s"}' "$name" "$target" "$source"
 		first=false
 	done
-	printf ']}\n'
+	printf '],"pending_changes":%s}\n' "$pending"
 }
 
 owz_list_replace() {
@@ -424,23 +443,32 @@ owz_list_put() {
 		return 0
 	fi
 	rm -f "$tmp"
+	if ! owz_lists_mark_pending; then
+		printf '%s\n' '{"ok":false,"error":"pending_state_write_failed"}'
+		return 0
+	fi
 	source=$(owz_list_source "$target")
-	printf '{"ok":true,"name":"%s","source":"%s"}\n' "$name" "$source"
+	printf '{"ok":true,"name":"%s","source":"%s","pending_changes":true}\n' "$name" "$source"
 }
 
 owz_list_remove() {
-	local name="$1" target
+	local name="$1" target source pending=false
 	target=$(owz_list_target "$name") || { printf '%s\n' '{"ok":false,"error":"invalid_list"}'; return 0; }
 	if ! owz_lock list_remove; then printf '%s\n' '{"ok":false,"error":"busy"}'; return 0; fi
-	if ! owz_list_replace "$target" "/opt/zapret2/ipset_def/$target"; then
-		printf '%s\n' '{"ok":false,"error":"restore_failed"}'
-		return 0
+	source=$(owz_list_source "$target")
+	if [ "$source" = custom ]; then
+		if ! owz_list_replace "$target" "/opt/zapret2/ipset_def/$target"; then
+			printf '%s\n' '{"ok":false,"error":"restore_failed"}'
+			return 0
+		fi
+		if ! owz_lists_mark_pending; then printf '%s\n' '{"ok":false,"error":"pending_state_write_failed"}'; return 0; fi
 	fi
-	printf '{"ok":true,"name":"%s","source":"builtin"}\n' "$name"
+	owz_lists_pending && pending=true
+	printf '{"ok":true,"name":"%s","source":"builtin","pending_changes":%s}\n' "$name" "$pending"
 }
 
 owz_list_reset_all() {
-	local name
+	local name source changed=false pending=false
 	if ! owz_lock list_reset_all; then printf '%s\n' '{"ok":false,"error":"busy"}'; return 0; fi
 	for name in zapret-hosts-google.txt zapret-hosts-user.txt zapret-hosts-user-exclude.txt zapret-ip-exclude.txt; do
 		if ! owz_list_paths_ready "$name"; then
@@ -449,12 +477,21 @@ owz_list_reset_all() {
 		fi
 	done
 	for name in zapret-hosts-google.txt zapret-hosts-user.txt zapret-hosts-user-exclude.txt zapret-ip-exclude.txt; do
+		source=$(owz_list_source "$name")
+		[ "$source" = custom ] && changed=true
+	done
+	for name in zapret-hosts-google.txt zapret-hosts-user.txt zapret-hosts-user-exclude.txt zapret-ip-exclude.txt; do
 		if ! owz_list_replace "$name" "/opt/zapret2/ipset_def/$name"; then
 			printf '{"ok":false,"error":"restore_failed","name":"%s"}\n' "$name"
 			return 0
 		fi
 	done
-	printf '%s\n' '{"ok":true}'
+	if [ "$changed" = true ] && ! owz_lists_mark_pending; then
+		printf '%s\n' '{"ok":false,"error":"pending_state_write_failed"}'
+		return 0
+	fi
+	owz_lists_pending && pending=true
+	printf '{"ok":true,"changed":%s,"pending_changes":%s}\n' "$changed" "$pending"
 }
 
 owz_profile_overlay() {
@@ -1310,6 +1347,9 @@ owz_control() {
 		if [ "$cleanup_failed" = true ]; then cleanup_success=false; else cleanup_success=true; fi
 	fi
 	owz_status >/dev/null
+	if [ -z "$failure" ] && [ "$action" = restart ] && [ "$OWZ_STATE" = RUNNING ] && owz_lists_pending; then
+		owz_lists_clear_pending || failure=pending_state_clear_failed
+	fi
 	if [ -n "$failure" ]; then owz_result false "$stage" "$failure" "$cleanup_attempted" "$cleanup_success"
 	else owz_result true complete '' false null; fi
 }

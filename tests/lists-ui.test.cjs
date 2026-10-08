@@ -62,9 +62,17 @@ const page = vm.runInNewContext(`(function(){String.prototype.format = function(
 });
 
 (async () => {
-    const rendered = page.render(await page.load());
-    const headers = find(rendered, 'th').map(node => node.children[0]);
-    assert.deepEqual(headers, ['List', 'Source', 'Action']);
+const rendered = page.render(await page.load());
+const headers = find(rendered, 'th').map(node => node.children[0]);
+assert.deepEqual(headers, ['List', 'Source', 'Action']);
+const editButtons = find(rendered, 'button').filter(node => node.children[0] === 'Edit');
+assert.equal(editButtons.length, 4);
+assert.equal(editButtons.every(button => button.attrs.disabled === false), true);
+page.lists[0].source = 'missing';
+page.renderRows();
+assert.equal(find({ children: [page.rows] }, 'button').find(button => button.children[0] === 'Edit').attrs.disabled, false);
+page.lists[0].source = 'builtin';
+page.renderRows();
 
     await page.editList(page.lists[2]);
     assert.deepEqual(reads, ['/opt/zapret2/ipset/zapret-hosts-user-exclude.txt']);

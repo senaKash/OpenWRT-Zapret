@@ -8,11 +8,13 @@ const listsStatus = rpc.declare({ object: 'openwrtzapret', method: 'lists_status
 const putList = rpc.declare({ object: 'openwrtzapret', method: 'put_list', params: [ 'name', 'data' ], expect: { '': {} }, reject: true });
 const removeList = rpc.declare({ object: 'openwrtzapret', method: 'remove_list', params: [ 'name' ], expect: { '': {} }, reject: true });
 const resetLists = rpc.declare({ object: 'openwrtzapret', method: 'reset_lists', expect: { '': {} }, reject: true });
+const getStatus = rpc.declare({ object: 'openwrtzapret', method: 'status', expect: { '': {} }, reject: true });
+const restartService = rpc.declare({ object: 'openwrtzapret', method: 'restart', expect: { '': {} }, reject: true });
 
 const MAX_LIST_BYTES = 49152;
 
 document.head.appendChild(E('link', {
-    rel: 'stylesheet', href: L.resource('view/zapret2/strategies.css') + '?v=27'
+    rel: 'stylesheet', href: L.resource('view/zapret2/strategies.css') + '?v=28'
 }));
 
 function encodeTextBase64(text) {
@@ -25,6 +27,10 @@ return view.extend({
     busy: false,
     lists: [],
     available: false,
+    pendingChanges: false,
+    applying: false,
+    applyMessage: '',
+    applyMessageKind: '',
 
     load: function() {
         return listsStatus().catch(e => ({ ok: false, error: e.message || String(e) }));
@@ -35,7 +41,28 @@ return view.extend({
     },
 
     updateButtons: function() {
+        this.applyButton.disabled = this.busy || !this.pendingChanges;
+        this.applyButton.textContent = this.applying ? _('Restarting zapret2…') : _('Apply Changes');
+        if (this.applying)
+            this.applyButton.classList.add('spinning');
+        else
+            this.applyButton.classList.remove('spinning');
         this.resetButton.disabled = this.busy || !this.lists.some(item => item.source == 'custom');
+        this.applyStatus.textContent = this.applyMessage;
+        this.applyStatus.className = 'cbi-value-description owz-lists-apply-status' +
+            (this.applyMessageKind ? ' owz-lists-apply-' + this.applyMessageKind : '');
+        this.applyStatus.hidden = !this.applyMessage;
+    },
+
+    setApplyMessage: function(message, kind) {
+        this.applyMessage = message || '';
+        this.applyMessageKind = kind || '';
+        this.updateButtons();
+    },
+
+    updatePending: function(value) {
+        this.pendingChanges = !!value;
+        this.setApplyMessage(this.pendingChanges ? _('Pending changes') : '', this.pendingChanges ? 'pending' : '');
     },
 
     renderRows: function() {
@@ -45,7 +72,7 @@ return view.extend({
             let actions = E('div', { 'class': 'owz-list-actions' }, [
                 E('button', {
                     'class': 'btn cbi-button owz-list-edit-button',
-                    'disabled': this.busy || source == 'missing',
+                    'disabled': this.busy || !item.target,
                     'click': L.bind(this.editList, this, item)
                 }, _('Edit'))
             ]);
@@ -110,6 +137,7 @@ return view.extend({
                     let result = await putList(item.name, encodeTextBase64(text));
                     if (!result?.ok) throw new Error(result?.error || 'invalid_backend_response');
                     item.source = result.source || 'custom';
+                    this.updatePending(result.pending_changes ?? true);
                     ui.hideModal();
                     this.renderRows();
                     this.notify(_('List saved: %s').format(item.name));
@@ -144,6 +172,7 @@ return view.extend({
             if (!result?.ok) throw new Error(result?.error || 'invalid_backend_response');
             let item = this.lists.find(entry => entry.name == name);
             if (item) item.source = result.source || 'builtin';
+            this.updatePending(result.pending_changes ?? this.pendingChanges);
         }
         catch (e) {
             this.notify(_('Unable to reset list: %s').format(e.message || e));
@@ -162,11 +191,10 @@ return view.extend({
             let result = await resetLists();
             if (!result?.ok) throw new Error(result?.error || 'invalid_backend_response');
             this.lists.forEach(item => { item.source = 'builtin'; });
+            this.updatePending(result.pending_changes ?? this.pendingChanges);
         }
         catch (e) {
             this.notify(_('Unable to reset all lists: %s').format(e.message || e));
-            let status = await listsStatus().catch(() => null);
-            if (status?.ok) this.lists = status.lists || [];
         }
         finally {
             this.busy = false;
@@ -174,9 +202,51 @@ return view.extend({
         }
     },
 
+    applyChanges: async function() {
+        if (this.busy || !this.pendingChanges) return;
+        this.busy = true;
+        this.applying = true;
+        this.updateButtons();
+        try {
+            let before = await getStatus();
+            if (!before || before.error || before.state != 'RUNNING' || before.running !== true) {
+                let state = before?.state || 'UNKNOWN';
+                this.setApplyMessage(_('Lists are saved, but zapret2 is %s. Changes remain pending.').format(state), 'error');
+                return;
+            }
+
+            let result = await restartService();
+            if (!result?.ok || result.final_state != 'RUNNING') {
+                let reason = result?.error || result?.stage || result?.final_state || 'restart_failed';
+                if (result?.error && result?.stage) reason += ' (' + result.stage + ')';
+                this.setApplyMessage(_('Failed to apply changes: %s').format(reason), 'error');
+                return;
+            }
+
+            this.pendingChanges = false;
+            this.setApplyMessage(_('Changes applied successfully'), 'success');
+        }
+        catch (e) {
+            this.setApplyMessage(_('Failed to apply changes: %s').format(e.message || e), 'error');
+        }
+        finally {
+            this.busy = false;
+            this.applying = false;
+            this.updateButtons();
+        }
+    },
+
     render: function(data) {
         this.available = !!data?.ok;
         this.lists = this.available ? data.lists || [] : [];
+        this.pendingChanges = this.available && data.pending_changes === true;
+        this.applyMessage = this.pendingChanges ? _('Pending changes') : '';
+        this.applyMessageKind = this.pendingChanges ? 'pending' : '';
+        this.applying = false;
+        this.applyButton = E('button', {
+            'class': 'btn cbi-button-apply', 'click': L.bind(this.applyChanges, this)
+        }, _('Apply Changes'));
+        this.applyStatus = E('p', { 'class': 'cbi-value-description owz-lists-apply-status', 'aria-live': 'polite' }, this.applyMessage);
         this.resetButton = E('button', {
             'class': 'btn cbi-button-negative',
             'click': L.bind(this.resetAll, this)
@@ -187,10 +257,12 @@ return view.extend({
         return E('div', [
             E('div', { 'class': 'cbi-section' }, [
                 E('div', { 'class': 'owz-section-heading owz-lists-heading' }, [
-                    E('h2', _('Lists')), this.resetButton
+                    E('h2', _('Lists')),
+                    E('div', { 'class': 'owz-lists-heading-actions' }, [ this.applyButton, this.resetButton ])
                 ]),
                 E('p', { 'class': 'cbi-value-description' },
-                    _('Edit a list to create a custom override. Reset restores the built-in version. Restart Zapret2 to ensure changes take effect.')),
+                    _('Edit lists individually, then apply changes to restart zapret2.')),
+                this.applyStatus,
                 ...(this.available ? [] : [ E('p', { 'class': 'cbi-value-description' }, _('Unable to load lists: %s').format(data?.error || 'unknown_error')) ])
             ]),
             E('div', { 'class': 'cbi-section' }, [

@@ -277,6 +277,12 @@
 
 .owz-lists-heading { margin-bottom: .75rem; }
 .owz-lists-heading h2 { margin: 0; }
+.owz-lists-heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-left: auto; }
+.owz-lists-apply-status { margin: .25rem 0 .65rem; }
+.owz-lists-apply-pending { color: #987000; }
+.owz-lists-apply-success { color: #27853e; }
+.owz-lists-apply-error { color: #b43a32; }
+.owz-lists-apply-loading { opacity: .75; }
 .owz-lists-table { min-width: 560px; }
 .owz-lists-table col:first-child { width: 52%; }
 .owz-lists-table col:nth-child(2) { width: 18%; }
@@ -325,4 +331,6 @@
 .owz-import-lists-note .btn { white-space: nowrap; }
 @media (max-width: 600px) {
     .owz-import-lists-note { align-items: flex-start; flex-direction: column; }
+    .owz-lists-heading { align-items: flex-start; }
+    .owz-lists-heading-actions { width: 100%; margin-left: 0; }
 }
