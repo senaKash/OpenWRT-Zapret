@@ -205,7 +205,18 @@ return view.extend({
         this.POLL.init( this.pollLog.bind(this), 1000 );  // interval 1000 ms
         this.POLL.start();
 
-        return E('div', { 'class': 'owz-theme owz-log-page' }, [ E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }), h2, tabs ]);
+        return E('div', { 'class': 'owz-theme owz-log-page' }, [
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }),
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/terminal-art.css') + '?v=2' }),
+            E('div', { 'class': 'owz-bbs-full-area' }, [
+                E('div', { 'class': 'owz-bbs-titlebar' }, [
+                    E('span', { 'aria-hidden': 'true' }, '▄▄▓▒░ '), h2,
+                    E('span', { 'aria-hidden': 'true' }, ' ░▒▓▄▄▄▄▄▄▄▄▄▄▄▄▄▄')
+                ]),
+                E('div', { 'class': 'owz-bbs-log-body' }, [tabs]),
+                E('div', { 'class': 'owz-bbs-footer', 'aria-hidden': 'true' }, '▀▀▀▀▀▓▓▓▒▒▒░░░══════════════════════░░▒▒▓▓▓▀▀▀▀▀')
+            ])
+        ]);
     },
 
     handleSaveApply: null,

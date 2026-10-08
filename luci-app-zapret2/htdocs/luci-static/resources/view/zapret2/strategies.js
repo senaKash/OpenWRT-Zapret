@@ -643,10 +643,12 @@ return view.extend({
 
         let page = E('div', { 'class': 'owz-theme owz-strategies-page' }, [
             E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }),
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/terminal-art.css') + '?v=2' }),
             E('div', { 'class': 'owz-top-layout' }, [
             E('div', { 'class': 'owz-top-column' }, [
             E('div', { 'class': 'cbi-section owz-control-section' }, [
                 E('h2', _('Selected Strategy')),
+                E('pre', { 'class': 'owz-art owz-strategies-branch', 'aria-hidden': 'true' }, '  o──────────────┐\n  │              │'),
                 E('div', { 'class': 'owz-status-line' }, [
                     E('span', [ _('Active:'), ' ', this.active ]),
                     E('span', [ _('State:'), ' ', this.stateBadge ])
@@ -676,6 +678,7 @@ return view.extend({
                         this.flowsealUpdateButton
                     ])
                 ]),
+                E('pre', { 'class': 'owz-art owz-strategies-update-wire', 'aria-hidden': 'true' }, '  ├───────────────o\n  │               │'),
                 E('div', { 'class': 'owz-updates-body' }, [
                 E('div', { 'class': 'owz-updates-values' }, [
                 E('div', { 'class': 'cbi-value' }, [

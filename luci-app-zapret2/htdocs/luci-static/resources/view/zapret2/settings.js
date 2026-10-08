@@ -262,6 +262,13 @@ return view.extend({
 
         return E('div', { 'class': 'owz-theme owz-lists-page' }, [
             E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/theme.css') + '?v=1' }),
+            E('link', { 'rel': 'stylesheet', 'href': L.resource('view/zapret2/terminal-art.css') + '?v=2' }),
+            E('div', { 'class': 'owz-lists-full-layout' }, [
+                E('aside', { 'class': 'owz-lists-dos-rail', 'aria-hidden': 'true' }, [
+                    E('pre', { 'class': 'owz-art owz-lists-tree' }, '╔══ FILES ════════╗\n║                 ║\n║  ├─ builtin/    ║\n║  └─ custom/     ║\n║                 ║\n╚═════════════════╝'),
+                    E('div', { 'class': 'owz-lists-rail-tail' }, '║\n║\n╚════════')
+                ]),
+                E('div', { 'class': 'owz-lists-index-area' }, [
             E('div', { 'class': 'cbi-section' }, [
                 E('div', { 'class': 'owz-section-heading owz-lists-heading' }, [
                     E('h2', _('Lists')),
@@ -282,6 +289,8 @@ return view.extend({
                     ])),
                     this.rows
                 ]))
+            ])
+                ])
             ])
         ]);
     },
